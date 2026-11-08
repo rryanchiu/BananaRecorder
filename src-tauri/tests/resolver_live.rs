@@ -75,17 +75,18 @@ async fn kuaishou_resolve_room() {
 async fn douyin_resolve_room() {
     let state = resolver::resolve(
         resolver::Platform::Douyin,
-        "https://live.douyin.com/273417261646",
+        "https://live.douyin.com/272979857435",
         "原画",
         None,
         None,
     )
-    .await;
-    match state {
-        Ok(state) => println!(
-            "douyin: anchor={} live={} title={}",
-            state.anchor_name, state.is_live, state.title
-        ),
-        Err(err) => println!("douyin resolve error (may be room-specific): {err}"),
-    }
+    .await
+    .expect("douyin resolve should not error");
+    println!(
+        "douyin: anchor={} live={} title={} flv={}",
+        state.anchor_name,
+        state.is_live,
+        state.title,
+        state.flv_url.as_deref().map(|u| &u[..60.min(u.len())]).unwrap_or("-")
+    );
 }

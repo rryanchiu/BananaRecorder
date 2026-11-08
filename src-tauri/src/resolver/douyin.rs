@@ -99,13 +99,22 @@ async fn resolve_via_api(
         .map_err(|e| format!("JSON 解析失败: {e}"))?;
 
     let data = json.get("data").ok_or("接口返回缺少 data（可能触发风控）")?;
+    // data.data is null/absent for rooms that are offline (or VR) — the python
+    // original treats this as a quiet "not live" result, NOT an error
+    // (spider.py:103-104 raise → main.py catches → {'anchor_name': ""} → wait)
     let room_data = data
         .get("data")
         .and_then(Value::as_array)
         .and_then(|arr| arr.first())
-        .cloned()
-        .ok_or("直播间不存在或为 VR 直播")?;
-    let mut room = room_data;
+        .cloned();
+    let Some(mut room) = room_data else {
+        let nickname = data
+            .pointer("/user/nickname")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        return Ok(RoomState::offline(&nickname));
+    };
     if let Some(obj) = room.as_object_mut() {
         let nickname = data
             .pointer("/user/nickname")
@@ -233,9 +242,13 @@ fn parse_room_from_html(html: &str) -> Result<Value, String> {
         .map(|m| m.as_str().to_string())
         .unwrap_or_default();
 
+    // python: room_store.split(',"has_commerce_goods"')[0] + '}}}' — the
+    // '}}}' suffix is appended UNCONDITIONALLY, marker present or not
     let mut room_store = store_match;
     if let Some(pos) = room_store.find(r#","has_commerce_goods""#) {
-        room_store = format!("{}{}}}}}", &room_store[..pos], "");}
+        room_store = room_store[..pos].to_string();
+    }
+    room_store.push_str("}}}");
 
 
     let parsed: Value =
