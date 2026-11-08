@@ -99,6 +99,24 @@ export default function Dashboard() {
   const { status } = useStatus()
   const running = status?.recorder.running ?? false
 
+  // uptime ticks every second locally, interpolated from the last backend
+  // status push (which arrives every 2s)
+  const [uptimeSec, setUptimeSec] = useState(0)
+  const baseRef = useRef({ uptime: 0, at: 0 })
+  useEffect(() => {
+    baseRef.current = { uptime: status?.recorder.uptime ?? 0, at: Date.now() }
+  }, [status])
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (running) {
+        setUptimeSec(baseRef.current.uptime + Math.floor((Date.now() - baseRef.current.at) / 1000))
+      } else {
+        setUptimeSec(0)
+      }
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [running])
+
   return (
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -117,7 +135,7 @@ export default function Dashboard() {
         <StatCard
           title="引擎运行时长"
           icon={Clock}
-          value={running ? formatDuration(status?.recorder.uptime ?? 0) : '未运行'}
+          value={running ? formatDuration(uptimeSec) : '未运行'}
         />
         <StatCard
           title="磁盘剩余空间"
