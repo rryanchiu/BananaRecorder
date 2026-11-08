@@ -1,0 +1,23 @@
+{
+ "fixed_ms": 1700000000000,
+ "sm3_abc": "",
+ "cases": [
+  {
+   "query": "aid=6383&app_name=douyin_web&live_id=1&device_platform=web&language=zh-CN&browser_language=zh-CN&browser_platform=Win32&browser_name=Chrome&browser_version=116.0.0.0&web_rid=273417261646&msToken=",
+   "ua": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 Safari/537.36 Core/1.116.567.400 QQBrowser/19.7.6764.400",
+   "expect": "E7mhBmg6mEVNgf6X56KLfY3q6fa3YI2I0HViMD2ftVvwqL39HMYD9exoIBGvXKWjwG/-IeYjy4hbO3xprQAjM36UHWwEUdQ2mgWkKl5Q5I0j53iruyRDntmF4vj3SFlm5XNAEOk0y75rKb70Woqe-vIlO62-zo0/9vE="
+  },
+  {
+   "query": "aid=6383&app_name=douyin_web&web_rid=123456&msToken=",
+   "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
+   "expect": "E7mhBmg6mEVNgf6X56KLfY3q64H3Y-2I0HViMD2ftV38qL39HMYD9exoIBGvXKWjwG/-IeYjy4hbO3xprQAjM36UHWwEUdQ2mgWkKl5Q5I0j53iruyRDntmF4vj3SFlm5XNAEOk0y75rKb70Woqe-vIlO62-zo0/9lm="
+  },
+  {
+   "query": "aid=6383&web_rid=88888888",
+   "ua": "short-ua",
+   "expect": "E7mhBmg6mEVNgf6X56KLfY3q6vl3YIII0HViMD2fsnfGqL39HMYD9exoIBGvXKWjwG/-IeYjy4hbO3xprQAjM36UHWwEUdQ2mgWkKl5Q5I0j53iruyRDntmF4vj3SFlm5XNAEOk0y75rKb70Woqe-vIlO62-zo0/9Ru="
+  }
+ ],
+ "sm3_hex_of_abc": "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0",
+ "result_encrypt_s4": "DfmpkD62"
+}
