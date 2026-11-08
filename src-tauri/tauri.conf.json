@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "直播录制 LiveRecorder",
-        "width": 1280,
-        "height": 820,
+        "width": 980,
+        "height": 640,
         "minWidth": 980,
         "minHeight": 640
       }
@@ -23,14 +23,18 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": [
+          "**"
+        ]
       }
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": ["binaries/ffmpeg.exe"],
+    "resources": [
+      "binaries/ffmpeg.exe"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
