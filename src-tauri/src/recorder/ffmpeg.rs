@@ -73,6 +73,17 @@ pub struct RecordSpec<'a> {
 
 const BASE_UA: &str = "Mozilla/5.0 (Linux; Android 11; SAMSUNG SM-G973U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.141 Mobile Safari/537.36";
 
+/// The app is a GUI-subsystem binary: without this flag every ffmpeg child
+/// allocates its own visible console window on Windows.
+#[cfg(target_os = "windows")]
+fn hide_console(cmd: &mut Command) {
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn hide_console(_cmd: &mut Command) {}
+
 /// Build the ffmpeg argument list (mirrors main.py build record command).
 pub fn build_args(spec: &RecordSpec) -> Vec<String> {
     let (rw_timeout, analyze, probe, bufsize, mux_queue) = if spec.overseas {
@@ -212,14 +223,14 @@ pub struct RecordingProcess {
 
 impl RecordingProcess {
     pub fn spawn(ffmpeg: &Path, args: &[String]) -> Result<Self, String> {
-        let child = Command::new(ffmpeg)
-            .args(args)
+        let mut cmd = Command::new(ffmpeg);
+        cmd.args(args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
             // ffmpeg writes progress/error info to stderr; keep it for debugging
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("启动 ffmpeg 失败: {e}"))?;
+            .stderr(std::process::Stdio::piped());
+        hide_console(&mut cmd);
+        let child = cmd.spawn().map_err(|e| format!("启动 ffmpeg 失败: {e}"))?;
         Ok(Self {
             child,
             stopped: Arc::new(AtomicBool::new(false)),
@@ -261,16 +272,18 @@ pub async fn convert_to_mp4(
     delete_origin: bool,
 ) -> Result<PathBuf, String> {
     let target = source.with_extension("mp4");
-    let status = Command::new(ffmpeg)
-        .args([
-            "-y",
-            "-i", &source.to_string_lossy(),
-            "-c:v", "copy",
-            "-c:a", "copy",
-            "-f", "mp4", &target.to_string_lossy(),
-        ])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+    let mut cmd = Command::new(ffmpeg);
+    cmd.args([
+        "-y",
+        "-i", &source.to_string_lossy(),
+        "-c:v", "copy",
+        "-c:a", "copy",
+        "-f", "mp4", &target.to_string_lossy(),
+    ])
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null());
+    hide_console(&mut cmd);
+    let status = cmd
         .status()
         .await
         .map_err(|e| format!("启动 ffmpeg 转码失败: {e}"))?;
