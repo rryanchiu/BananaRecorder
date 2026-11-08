@@ -1,5 +1,7 @@
 // Douyin resolver — signed webcast api path (ab_sign port of spider.py:68)
-// with the unsigned HTML parsing path (spider.py:230) as fallback.
+// with the unsigned HTML parsing path (spider.py:230) as fallback, plus
+// profile-homepage / short-link support via the amemv reflow api
+// (spider.py get_douyin_app_stream_data + room.py get_sec_user_id).
 
 use super::ab_sign::ab_sign;
 use super::{http_client, pad_quality_list, quality_code, quality_index, RoomState};
@@ -10,6 +12,10 @@ use url::form_urlencoded;
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0";
 /// the webcast api path signs the query against THIS user agent (spider.py:73)
 const SIGN_UA: &str = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 Safari/537.36 Core/1.116.567.400 QQBrowser/19.7.6764.400";
+/// the reflow api signs against THIS user agent (spider.py:147)
+const APP_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0";
+/// mobile UA used to follow profile/short-link redirects (room.py HEADERS)
+const MOBILE_UA: &str = "Mozilla/5.0 (Linux; Android 11; SAMSUNG SM-G973U) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/14.2 Chrome/87.0.4280.141 Mobile Safari/537.36";
 
 /// Embedded anonymous cookie (the ttwid is the critical part), same spirit as
 /// the hardcoded cookie in spider.py. Users can override via settings.
@@ -17,51 +23,206 @@ const DEFAULT_COOKIE: &str = "ttwid=1%7CB1qls3GdnZhUov9o2NxOMxxYS2ff6OSvEWbv0ytb
 
 const WEBCAST_TTWID: &str = "ttwid=1%7C2iDIYVmjzMcpZ20fcaFde0VghXAA3NaNXE_SLR68IyE%7C1761045455%7Cab35197d5cfb21df6cbb2fa7ef1c9262206b062c315b9d04da746d0b37dfbc7d";
 
+/// redirect-following cookie (room.py:29)
+const REDIRECT_COOKIE: &str = "s_v_web_id=verify_lk07kv74_QZYCUApD_xhiB_405x_Ax51_GYO9bUIyZQVf";
+/// iesdouyin share-page cookie (room.py:90)
+const IES_TTWID: &str = "ttwid=1%7C4ejCkU2bKY76IySQENJwvGhg1IQZrgGEupSyTKKfuyk%7C1740470403%7Cbc9ad2ee341f1a162f9e27f4641778030d1ae91e31f9df6553a8f2efa3bdb7b4; __ac_nonce=0683e59f3009cc48fbab0; __ac_signature=_02B4Z6wo00f01mG6waQAAIDB9JUCzFb6.TZhmsUAAPBf34; __ac_referer=__ac_blank";
+
+/// fixed verifyFp used by the reflow api (spider.py:158)
+const VERIFY_FP: &str = "verify_hwj52020_7szNlAB7_pxNY_48Vh_ALKF_GA1Uf3yteoOY";
+
 pub async fn resolve(
     url: &str,
     quality: &str,
     cookie: Option<&str>,
     proxy: Option<String>,
 ) -> Result<RoomState, String> {
-    if url.contains("v.douyin.com") || url.contains("/user/") {
-        return Err("暂不支持抖音短链/主页链接，请使用 https://live.douyin.com/房间号 形式的链接".into());
-    }
-
-    // primary: signed webcast api; fallback: page html parsing
-    match resolve_via_api(url, quality, cookie, proxy.clone()).await {
-        Ok(state) => Ok(state),
-        Err(api_err) => {
-            resolve_via_html(url, quality, cookie, proxy)
-                .await
-                .map_err(|html_err| format!("抖音签名接口失败({api_err})，页面解析也失败({html_err})"))
+    if url.contains("live.douyin.com") {
+        // live room url: signed webcast api, html page parsing as fallback
+        let web_rid = url
+            .split("live.douyin.com/")
+            .last()
+            .unwrap_or("")
+            .split('?')
+            .next()
+            .unwrap_or("")
+            .trim_end_matches('/')
+            .to_string();
+        if web_rid.is_empty() {
+            return Err("无法解析抖音房间号".into());
         }
+        match resolve_web_rid(&web_rid, quality, cookie, proxy.clone()).await {
+            Ok(state) => Ok(state),
+            Err(api_err) => {
+                resolve_via_html(url, quality, cookie, proxy)
+                    .await
+                    .map_err(|html_err| {
+                        format!("抖音签名接口失败({api_err})，页面解析也失败({html_err})")
+                    })
+            }
+        }
+    } else {
+        // profile home page (www.douyin.com/user/xxx) or v.douyin.com short link
+        resolve_profile(url, quality, cookie, proxy).await
     }
 }
 
-/// Signed webcast api path (spider.py get_douyin_web_stream_data).
-async fn resolve_via_api(
+// ---------------------------------------------------------------------------
+// profile home page / short link → live room (spider.py:144-226, room.py)
+// ---------------------------------------------------------------------------
+
+/// Follow redirects on a profile/short link; when douyin bounces us to the
+/// amemv reflow endpoint we get room_id + sec_user_id and query the reflow
+/// api for the room. Otherwise fall back to the douyin-number route.
+async fn resolve_profile(
     url: &str,
     quality: &str,
     cookie: Option<&str>,
     proxy: Option<String>,
 ) -> Result<RoomState, String> {
-    let web_rid = url
-        .split('?')
-        .next()
-        .unwrap_or(url)
-        .rsplit("live.douyin.com/")
-        .next()
-        .map(|_| {
-            url.split("live.douyin.com/")
-                .last()
-                .unwrap_or("")
-                .to_string()
-        })
-        .unwrap_or_default();
-    if web_rid.is_empty() {
-        return Err("无法解析 web_rid".into());
+    let client = http_client(proxy.clone())?;
+    let resp = client
+        .get(url)
+        .header("User-Agent", MOBILE_UA)
+        .header("Accept-Language", "zh-CN,zh;q=0.8")
+        .header("Cookie", REDIRECT_COOKIE)
+        .send()
+        .await
+        .map_err(|e| format!("抖音主页请求失败: {e}"))?;
+    let final_url = resp.url().to_string();
+    drop(resp);
+
+    if final_url.contains("reflow/") {
+        // redirect carries room_id + sec_user_id → reflow api
+        let sec_re = Regex::new(r#"sec_user_id=([\w-]+)(&|#|$)"#).unwrap();
+        let sec_user_id = sec_re
+            .captures(&final_url)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().to_string())
+            .ok_or("重定向链接中未找到 sec_user_id")?;
+        let room_id = final_url
+            .split('?')
+            .next()
+            .unwrap_or("")
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        if room_id.is_empty() {
+            return Err("重定向链接中未找到 room_id".into());
+        }
+        return fetch_room_by_reflow(&room_id, &sec_user_id, quality, cookie, proxy).await;
     }
 
+    // no reflow redirect: profile page → douyin number → live room route
+    // (room.py get_unique_id)
+    let sec_user_id = final_url
+        .split('?')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    if sec_user_id.is_empty() {
+        return Err("无法从链接中解析抖音用户".into());
+    }
+
+    let share_client = http_client(proxy.clone())?;
+    let share_html = share_client
+        .get(format!("https://www.iesdouyin.com/share/user/{sec_user_id}"))
+        .header("User-Agent", MOBILE_UA)
+        .header("Cookie", IES_TTWID)
+        .send()
+        .await
+        .map_err(|e| format!("抖音分享页请求失败: {e}"))?
+        .text()
+        .await
+        .map_err(|e| format!("抖音分享页读取失败: {e}"))?;
+
+    let uid_re = Regex::new(r#"unique_id":"(.*?)","verification_type"#).unwrap();
+    let unique_id = uid_re
+        .captures_iter(&share_html)
+        .last()
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string())
+        .ok_or("未找到抖音号，该主页可能无法转为直播间链接")?;
+
+    // python fallback (spider.py:192-193): douyin number → live page html parse
+    let room_url = format!("https://live.douyin.com/{unique_id}");
+    resolve_via_html(&room_url, quality, cookie, proxy).await
+}
+
+/// amemv reflow api for profile-resolved rooms (spider.py get_app_data).
+async fn fetch_room_by_reflow(
+    room_id: &str,
+    sec_user_id: &str,
+    quality: &str,
+    cookie: Option<&str>,
+    proxy: Option<String>,
+) -> Result<RoomState, String> {
+    let pairs = [
+        ("verifyFp", VERIFY_FP),
+        ("type_id", "0"),
+        ("live_id", "1"),
+        ("room_id", room_id),
+        ("sec_user_id", sec_user_id),
+        ("version_code", "99.99.99"),
+        ("app_id", "1128"),
+    ];
+    let query: String = form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(pairs.iter())
+        .finish();
+    let a_bogus = ab_sign(&query, APP_UA);
+    let api = format!(
+        "https://webcast.amemv.com/webcast/room/reflow/info/?{query}&a_bogus={a_bogus}"
+    );
+
+    let client = http_client(proxy)?;
+    let mut request = client
+        .get(&api)
+        .header("User-Agent", APP_UA)
+        .header("Referer", "https://live.douyin.com/")
+        .header("Accept-Language", "zh-CN,zh;q=0.8");
+    request = request.header("Cookie", cookie.unwrap_or(DEFAULT_COOKIE));
+    let json: Value = request
+        .send()
+        .await
+        .map_err(|e| format!("reflow 接口请求失败: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("reflow 接口 JSON 解析失败: {e}"))?;
+
+    let data = json.get("data").ok_or("reflow 接口返回缺少 data（可能触发风控）")?;
+    // data.room is absent for offline rooms — quiet "not live", not an error
+    let Some(mut room) = data.get("room").cloned() else {
+        return Ok(RoomState::offline(""));
+    };
+    let nickname = room
+        .pointer("/owner/nickname")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if let Some(obj) = room.as_object_mut() {
+        obj.insert("anchor_name".into(), Value::String(nickname));
+    }
+
+    merge_sdk_origin(&mut room);
+    select_stream(room, quality).await
+}
+
+// ---------------------------------------------------------------------------
+// live room url → signed webcast api (spider.py get_douyin_web_stream_data)
+// ---------------------------------------------------------------------------
+
+async fn resolve_web_rid(
+    web_rid: &str,
+    quality: &str,
+    cookie: Option<&str>,
+    proxy: Option<String>,
+) -> Result<RoomState, String> {
     let pairs = [
         ("aid", "6383"),
         ("app_name", "douyin_web"),
@@ -72,7 +233,7 @@ async fn resolve_via_api(
         ("browser_platform", "Win32"),
         ("browser_name", "Chrome"),
         ("browser_version", "116.0.0.0"),
-        ("web_rid", web_rid.as_str()),
+        ("web_rid", web_rid),
         ("msToken", ""),
     ];
     let query: String = form_urlencoded::Serializer::new(String::new())
@@ -115,12 +276,12 @@ async fn resolve_via_api(
             .to_string();
         return Ok(RoomState::offline(&nickname));
     };
+    let nickname = data
+        .pointer("/user/nickname")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     if let Some(obj) = room.as_object_mut() {
-        let nickname = data
-            .pointer("/user/nickname")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
         obj.insert("anchor_name".into(), Value::String(nickname));
     }
 

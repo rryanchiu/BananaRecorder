@@ -104,13 +104,11 @@ impl Sm3 {
     fn fill(&mut self) {
         let bit_length = (self.size as u64) * 8;
         self.chunk.push(0x80);
-        let mut padding_pos = (self.chunk.len()) % 64;
-        if 64 - padding_pos < 8 {
-            padding_pos -= 64;
-        }
-        while padding_pos < 56 {
+        // pad with zeros so (len % 64) == 56 — equivalent to the python
+        // negative-padding_pos branch but without the subtraction overflow
+        let pad = (56 + 64 - (self.chunk.len() % 64)) % 64;
+        for _ in 0..pad {
             self.chunk.push(0);
-            padding_pos += 1;
         }
         // message length: high 32 bits then low 32 bits, big endian
         let high = (bit_length / 4_294_967_296) as u32;
@@ -469,6 +467,21 @@ mod tests {
             hex,
             "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0"
         );
+    }
+
+    #[test]
+    fn sm3_padding_covers_all_lengths() {
+        // the python fill() takes a negative padding branch for chunk lengths
+        // where 64 - len%64 < 8; make sure every residue class digests cleanly
+        for len in [0usize, 1, 55, 56, 57, 58, 63, 64, 65, 100, 119, 120, 121, 200] {
+            let data = vec![b'a'; len];
+            let d1 = sm3_sum(&data);
+            assert_eq!(d1.len(), 32);
+            // digest must equal the double-sm3 of itself (self-consistent)
+            let d2 = sm3_sum(&d1);
+            assert_eq!(d2.len(), 32);
+            assert_ne!(d1, d2);
+        }
     }
 
     #[test]
