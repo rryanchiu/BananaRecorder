@@ -113,6 +113,9 @@ pub fn run() {
             commands::get_logs,
             commands::list_videos,
             commands::delete_video,
+            commands::delete_videos,
+            commands::merge_videos,
+            commands::transcode_videos,
             commands::save_video_as,
             commands::open_video_folder,
         ])

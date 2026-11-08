@@ -136,6 +136,12 @@ export const api = {
   listVideos: (path = "") => request<VideoListResponse>("list_videos", { path }),
   videoSrc: (absolutePath: string) => convertFileSrc(absolutePath),
   deleteVideo: (path: string) => request<{ ok: boolean }>("delete_video", { path }),
+  deleteVideos: (paths: string[]) =>
+    request<{ deleted: number; failed: number }>("delete_videos", { paths }),
+  mergeVideos: (paths: string[]) =>
+    request<{ ok: boolean; output: string; count: number }>("merge_videos", { paths }),
+  transcodeVideos: (paths: string[]) =>
+    request<{ converted: number; skipped: number; failed: number }>("transcode_videos", { paths }),
   openVideoFolder: (path: string) => request<{ ok: boolean }>("open_video_folder", { path }),
   saveVideoAs: (path: string, destPath: string) =>
     request<{ ok: boolean }>("save_video_as", { path, destPath }),

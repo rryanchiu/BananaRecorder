@@ -641,3 +641,171 @@ pub async fn open_video_folder(state: State<'_, AppState>, path: String) -> Resu
     tauri_plugin_opener::open_path(folder, None::<&str>).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({ "ok": true }))
 }
+
+// ---------------------------------------------------------------------------
+// batch operations on video files
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn delete_videos(state: State<'_, AppState>, paths: Vec<String>) -> Result<serde_json::Value, String> {
+    let settings = state.settings.read().await.clone();
+    let root = settings.save_dir(&state.downloads_dir);
+    let mut deleted = 0u64;
+    let mut failed = 0u64;
+    for path in &paths {
+        match resolve_under_root(&root, path) {
+            Ok(target) if target.is_file() && target != root => {
+                if std::fs::remove_file(&target).is_ok() {
+                    deleted += 1;
+                } else {
+                    failed += 1;
+                }
+            }
+            _ => failed += 1,
+        }
+    }
+    Ok(serde_json::json!({ "deleted": deleted, "failed": failed }))
+}
+
+#[tauri::command]
+pub async fn merge_videos(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    if paths.len() < 2 {
+        return Err("至少选择两个视频才能合并".into());
+    }
+    let settings = state.settings.read().await.clone();
+    let root = settings.save_dir(&state.downloads_dir);
+
+    // resolve all inputs; every file must share one container format
+    let mut files: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
+    let mut ext: Option<String> = None;
+    for path in &paths {
+        let target = resolve_under_root(&root, path)?;
+        if !target.is_file() {
+            return Err(format!("文件不存在: {}", target.display()));
+        }
+        let file_ext = video_ext(&target).ok_or("选择中包含不支持的文件类型")?;
+        match &ext {
+            Some(prev) if *prev != file_ext => {
+                return Err("合并的视频格式不一致，请先批量转码为相同格式（如 mp4）".into())
+            }
+            _ => ext = Some(file_ext),
+        }
+        let mtime = target
+            .metadata()
+            .and_then(|m| m.modified())
+            .map_err(|e| e.to_string())?;
+        files.push((target, mtime));
+    }
+    let ext = ext.unwrap_or_default();
+
+    // recording order = oldest modification time first
+    files.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+
+    // ffmpeg concat demuxer with a temporary file list
+    let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let first_dir = files[0]
+        .0
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.clone());
+    let list_path = first_dir.join(format!("concat_{stamp}.txt"));
+    let mut list = String::new();
+    for (file, _) in &files {
+        // single quotes in paths need ffmpeg's escaping
+        let escaped = file.to_string_lossy().replace('\'', "'\\''");
+        list.push_str(&format!("file '{escaped}'\n"));
+    }
+    std::fs::write(&list_path, &list).map_err(|e| e.to_string())?;
+
+    let output_path = first_dir.join(format!("merged_{stamp}.{ext}"));
+    let ffmpeg = crate::recorder::ffmpeg::find_ffmpeg(Some(&app))?;
+    let mut cmd = tokio::process::Command::new(&ffmpeg);
+    cmd.args([
+        "-y",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", &list_path.to_string_lossy(),
+        "-c", "copy",
+        &output_path.to_string_lossy(),
+    ])
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null());
+    crate::recorder::ffmpeg::hide_console(&mut cmd);
+    let status = cmd
+        .status()
+        .await
+        .map_err(|e| format!("启动 ffmpeg 合并失败: {e}"))?;
+    let _ = std::fs::remove_file(&list_path);
+
+    if !status.success() {
+        let _ = std::fs::remove_file(&output_path);
+        return Err("合并失败：所选视频的编码参数可能不一致，请先批量转码后再合并".into());
+    }
+
+    crate::events::app_log(
+        &app,
+        &state.log_buffer,
+        "INFO",
+        &format!(
+            "视频合并完成: {} 个文件 → {}",
+            files.len(),
+            output_path.display()
+        ),
+    );
+    Ok(serde_json::json!({
+        "ok": true,
+        "output": output_path.to_string_lossy(),
+        "count": files.len(),
+    }))
+}
+
+#[tauri::command]
+pub async fn transcode_videos(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    let settings = state.settings.read().await.clone();
+    let root = settings.save_dir(&state.downloads_dir);
+    let delete_origin = settings.delete_origin;
+    let ffmpeg = crate::recorder::ffmpeg::find_ffmpeg(Some(&app))?;
+
+    let mut converted = 0u64;
+    let mut skipped = 0u64;
+    let mut failed = 0u64;
+    for path in &paths {
+        let target = match resolve_under_root(&root, path) {
+            Ok(t) => t,
+            Err(_) => {
+                failed += 1;
+                continue;
+            }
+        };
+        if video_ext(&target).as_deref() == Some("mp4") {
+            skipped += 1;
+            continue;
+        }
+        if target.is_file() {
+            match crate::recorder::ffmpeg::convert_to_mp4(&ffmpeg, &target, delete_origin).await {
+                Ok(_) => converted += 1,
+                Err(_) => failed += 1,
+            }
+        } else {
+            failed += 1;
+        }
+    }
+
+    crate::events::app_log(
+        &app,
+        &state.log_buffer,
+        "INFO",
+        &format!(
+            "批量转码完成: 转码 {converted} 个, 跳过 {skipped} 个 (已是 mp4), 失败 {failed} 个"
+        ),
+    );
+    Ok(serde_json::json!({ "converted": converted, "skipped": skipped, "failed": failed }))
+}

@@ -76,13 +76,13 @@ const BASE_UA: &str = "Mozilla/5.0 (Linux; Android 11; SAMSUNG SM-G973U) AppleWe
 /// The app is a GUI-subsystem binary: without this flag every ffmpeg child
 /// allocates its own visible console window on Windows.
 #[cfg(target_os = "windows")]
-fn hide_console(cmd: &mut Command) {
+pub fn hide_console(cmd: &mut Command) {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     cmd.creation_flags(CREATE_NO_WINDOW);
 }
 
 #[cfg(not(target_os = "windows"))]
-fn hide_console(_cmd: &mut Command) {}
+pub fn hide_console(_cmd: &mut Command) {}
 
 /// Build the ffmpeg argument list (mirrors main.py build record command).
 pub fn build_args(spec: &RecordSpec) -> Vec<String> {
