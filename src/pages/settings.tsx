@@ -2,8 +2,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { FolderOpen, Save } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, type AppSettings } from '@/lib/api'
+import { useStatus } from '@/lib/status'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -56,11 +65,23 @@ function Row({
   )
 }
 
+interface MigrationCheck {
+  changed: boolean
+  old_root: string
+  new_root: string
+  file_count: number
+  total_size: number
+}
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [original, setOriginal] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [migration, setMigration] = useState<MigrationCheck | null>(null)
+  const [migrating, setMigrating] = useState(false)
+  const { status } = useStatus()
+  const recordingCount = status?.recording_files.length ?? 0
 
   const load = useCallback(async () => {
     try {
@@ -102,11 +123,7 @@ export default function SettingsPage() {
     }
   }
 
-  const save = async () => {
-    if (dirtyCount === 0) {
-      toast.info('没有需要保存的修改')
-      return
-    }
+  const doSave = async () => {
     setSaving(true)
     try {
       const saved = await api.updateSettings(settings)
@@ -118,6 +135,50 @@ export default function SettingsPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const save = async () => {
+    if (dirtyCount === 0) {
+      toast.info('没有需要保存的修改')
+      return
+    }
+    try {
+      // changing the save folder with existing videos triggers a migration offer
+      const check = await api.checkSavePathChange(settings.save_path)
+      if (check.changed && check.file_count > 0) {
+        setMigration(check)
+        return
+      }
+    } catch {
+      // check failure should not block saving
+    }
+    await doSave()
+  }
+
+  const confirmMigration = async (migrate: boolean) => {
+    const check = migration
+    setMigration(null)
+    if (!check) return
+    if (migrate) {
+      setMigrating(true)
+      try {
+        const result = await api.migrateSavePath(settings.save_path)
+        toast.success(
+          `迁移完成：移动 ${result.moved} 个文件${result.skipped ? `，跳过 ${result.skipped} 个同名文件` : ''}${
+            result.failed ? `，失败 ${result.failed} 个` : ''
+          }`
+        )
+        if (result.failed > 0) {
+          toast.warning('部分文件迁移失败，原文件夹中仍保留这些文件')
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : '迁移失败，设置未保存')
+        setMigrating(false)
+        return
+      }
+      setMigrating(false)
+    }
+    await doSave()
   }
 
   if (loading) {
@@ -299,6 +360,53 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* save-folder migration confirmation */}
+      <Dialog
+        open={!!migration}
+        onOpenChange={(open) => {
+          if (!open && !migrating) setMigration(null)
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>原文件夹中有视频文件，是否迁移至新文件夹？</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2 text-left">
+                <div>
+                  原文件夹 <code className="rounded bg-muted px-1 py-0.5 text-xs">{migration?.old_root}</code> 中有{' '}
+                  <span className="font-semibold">{migration?.file_count}</span> 个视频文件（共{' '}
+                  {migration ? formatBytesPublic(migration.total_size) : ''}）。
+                </div>
+                <div>
+                  新文件夹 <code className="rounded bg-muted px-1 py-0.5 text-xs">{migration?.new_root}</code>
+                  。迁移保留原有目录结构，同名文件将被跳过。
+                </div>
+                {recordingCount > 0 && (
+                  <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400">
+                    当前有 {recordingCount} 个录制正在进行：它们会继续写完当前文件（留在原文件夹），新录制将写入新文件夹。
+                  </div>
+                )}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" disabled={migrating} onClick={() => void confirmMigration(false)}>
+              不迁移，直接保存
+            </Button>
+            <Button disabled={migrating} onClick={() => void confirmMigration(true)}>
+              {migrating ? '迁移中...' : '迁移文件并保存'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
+}
+
+function formatBytesPublic(bytes: number): string {
+  if (!bytes) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(1024))
+  return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`
 }

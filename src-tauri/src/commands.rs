@@ -266,6 +266,162 @@ pub async fn update_settings(
     Ok(state.settings.read().await.clone())
 }
 
+// ---------------------------------------------------------------------------
+// save path migration
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct SavePathCheck {
+    /// true when the effective folder would change
+    pub changed: bool,
+    pub old_root: String,
+    pub new_root: String,
+    pub file_count: u64,
+    pub total_size: u64,
+}
+
+fn count_video_files(dir: &Path) -> (u64, u64) {
+    let mut count = 0u64;
+    let mut size = 0u64;
+    for file in walk_simple(dir) {
+        if video_ext(&file).is_some() {
+            count += 1;
+            if let Ok(meta) = file.metadata() {
+                size += meta.len();
+            }
+        }
+    }
+    (count, size)
+}
+
+#[tauri::command]
+pub async fn check_save_path_change(
+    state: State<'_, AppState>,
+    new_path: String,
+) -> Result<SavePathCheck, String> {
+    let settings = state.settings.read().await.clone();
+    let old_root = settings.save_dir(&state.downloads_dir);
+    let mut candidate = settings.clone();
+    candidate.save_path = new_path;
+    let new_root = candidate.save_dir(&state.downloads_dir);
+
+    let changed = old_root != new_root;
+    let (file_count, total_size) = if changed && old_root.exists() {
+        count_video_files(&old_root)
+    } else {
+        (0, 0)
+    };
+
+    Ok(SavePathCheck {
+        changed,
+        old_root: old_root.to_string_lossy().to_string(),
+        new_root: new_root.to_string_lossy().to_string(),
+        file_count,
+        total_size,
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct MigrateResult {
+    pub moved: u64,
+    pub skipped: u64,
+    pub failed: u64,
+}
+
+/// Move the whole save tree from the current root to `new_path`.
+/// Same-drive moves are atomic renames; cross-drive falls back to copy+delete.
+/// Files that already exist at the destination are skipped (reported).
+fn migrate_tree(src: &Path, dst: &Path) -> Result<MigrateResult, String> {
+    std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    let mut result = MigrateResult {
+        moved: 0,
+        skipped: 0,
+        failed: 0,
+    };
+    for entry in std::fs::read_dir(src).map_err(|e| e.to_string())?.flatten() {
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            let sub = migrate_tree(&from, &to)?;
+            result.moved += sub.moved;
+            result.skipped += sub.skipped;
+            result.failed += sub.failed;
+        } else if to.exists() {
+            result.skipped += 1;
+        } else if std::fs::rename(&from, &to).is_ok() {
+            result.moved += 1;
+        } else {
+            // cross-drive fallback
+            match std::fs::copy(&from, &to) {
+                Ok(_) => {
+                    let _ = std::fs::remove_file(&from);
+                    result.moved += 1;
+                }
+                Err(_) => result.failed += 1,
+            }
+        }
+    }
+    Ok(result)
+}
+
+/// Best-effort removal of now-empty directories under `dir` (inclusive).
+fn remove_empty_dirs(dir: &Path) -> bool {
+    let mut empty = true;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if !remove_empty_dirs(&path) {
+                    empty = false;
+                }
+            } else {
+                empty = false;
+            }
+        }
+    }
+    if empty {
+        let _ = std::fs::remove_dir(dir);
+    }
+    empty
+}
+
+#[tauri::command]
+pub async fn migrate_save_path(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    new_path: String,
+) -> Result<MigrateResult, String> {
+    let old_root = state.settings.read().await.save_dir(&state.downloads_dir);
+    let mut candidate = state.settings.read().await.clone();
+    candidate.save_path = new_path;
+    let new_root = candidate.save_dir(&state.downloads_dir);
+
+    if old_root == new_root || !old_root.exists() {
+        return Ok(MigrateResult {
+            moved: 0,
+            skipped: 0,
+            failed: 0,
+        });
+    }
+
+    let result = migrate_tree(&old_root, &new_root)?;
+    remove_empty_dirs(&old_root);
+    crate::events::app_log(
+        &app,
+        &state.log_buffer,
+        "INFO",
+        &format!(
+            "视频目录迁移完成: {} → {} (移动 {} 个, 跳过 {} 个, 失败 {} 个)",
+            old_root.display(),
+            new_root.display(),
+            result.moved,
+            result.skipped,
+            result.failed
+        ),
+    );
+    Ok(result)
+}
+
 #[tauri::command]
 pub async fn get_logs(state: State<'_, AppState>, source: String, lines: usize) -> Result<serde_json::Value, String> {
     match source.as_str() {

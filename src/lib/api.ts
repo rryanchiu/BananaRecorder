@@ -121,6 +121,16 @@ export const api = {
   // settings
   getSettings: () => request<AppSettings>("get_settings"),
   updateSettings: (settings: AppSettings) => request<AppSettings>("update_settings", { settings }),
+  checkSavePathChange: (newPath: string) =>
+    request<{
+      changed: boolean
+      old_root: string
+      new_root: string
+      file_count: number
+      total_size: number
+    }>("check_save_path_change", { newPath }),
+  migrateSavePath: (newPath: string) =>
+    request<{ moved: number; skipped: number; failed: number }>("migrate_save_path", { newPath }),
 
   // videos
   listVideos: (path = "") => request<VideoListResponse>("list_videos", { path }),

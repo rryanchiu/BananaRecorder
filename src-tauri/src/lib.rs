@@ -108,6 +108,8 @@ pub fn run() {
             commands::stop_recording,
             commands::get_settings,
             commands::update_settings,
+            commands::check_save_path_change,
+            commands::migrate_save_path,
             commands::get_logs,
             commands::list_videos,
             commands::delete_video,
