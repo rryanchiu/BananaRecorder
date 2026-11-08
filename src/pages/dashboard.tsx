@@ -142,14 +142,18 @@ export default function Dashboard() {
             ) : (
               <div className="max-h-72 space-y-2 overflow-y-auto">
                 {status!.recording_files.map((f) => (
-                  <div key={`${f.folder}/${f.name}`} className="flex items-center gap-3 rounded-lg border p-3">
+                  <div key={f.room_id} className="flex items-center gap-3 rounded-lg border p-3">
                     <span className="relative flex h-2.5 w-2.5">
                       <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-60" />
                       <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">{f.name}</div>
-                      <div className="truncate text-xs text-muted-foreground">{f.folder || '根目录'}</div>
+                      <div className="truncate text-sm font-medium">
+                        {f.anchor || f.file.split(/[\\/]/).pop()}
+                      </div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {f.file.split(/[\\/]/).pop()} · {f.folder || '根目录'}
+                      </div>
                     </div>
                     <Badge variant="secondary">{formatBytes(f.size)}</Badge>
                   </div>

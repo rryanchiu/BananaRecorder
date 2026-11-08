@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Check, Copy, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Check, CircleStop, Copy, Pencil, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, detectPlatform, SUPPORTED_PLATFORMS, type Room } from '@/lib/api'
 import { useStatus } from '@/lib/status'
@@ -197,8 +197,10 @@ export default function Rooms() {
   const [deletingRoom, setDeletingRoom] = useState<Room | null>(null)
 
   const recorderRunning = status?.recorder.running ?? false
-  const recordingFolders = useMemo(
-    () => new Set((status?.recording_files ?? []).map((f) => f.folder)),
+  // exact in-flight recording detection: the backend tags each recording with
+  // its room id, no folder-name guessing
+  const recordingRoomIds = useMemo(
+    () => new Set((status?.recording_files ?? []).map((f) => f.room_id)),
     [status]
   )
 
@@ -239,11 +241,25 @@ export default function Rooms() {
     }
   }
 
-  const roomState = (room: Room): { label: string; variant: 'success' | 'info' | 'secondary' } => {
+  const isRecording = (room: Room) => recordingRoomIds.has(room.id)
+
+  const roomState = (
+    room: Room
+  ): { label: string; variant: 'success' | 'info' | 'secondary' | 'destructive' } => {
+    if (isRecording(room)) return { label: '录制中', variant: 'success' }
     if (!room.enabled) return { label: '已停用', variant: 'secondary' }
-    if (recordingFolders.has(room.name) && room.name) return { label: '录制中', variant: 'success' }
     if (recorderRunning) return { label: '监控中', variant: 'info' }
     return { label: '待启动', variant: 'secondary' }
+  }
+
+  const stopRecording = async (room: Room) => {
+    try {
+      await api.stopRecording(room.id)
+      toast.success('已停止录制并停用该直播间（重新打开开关即可恢复监控）')
+      await load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '停止失败')
+    }
   }
 
   return (
@@ -328,6 +344,18 @@ export default function Rooms() {
                       <Badge variant={state.variant}>{state.label}</Badge>
                     </TableCell>
                     <TableCell className="pr-4 text-right">
+                      {isRecording(room) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 text-destructive"
+                          title="停止该直播间的录制（同时停用监控）"
+                          onClick={() => void stopRecording(room)}
+                        >
+                          <CircleStop />
+                          停止录制
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"

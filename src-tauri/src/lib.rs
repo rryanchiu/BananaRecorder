@@ -105,6 +105,7 @@ pub fn run() {
             commands::create_room,
             commands::update_room,
             commands::delete_room,
+            commands::stop_recording,
             commands::get_settings,
             commands::update_settings,
             commands::get_logs,

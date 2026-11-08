@@ -156,6 +156,28 @@ pub struct RoomPatch {
     pub enabled: Option<bool>,
 }
 
+/// Stop the in-flight recording of a room: cancel its task (which sends the
+/// graceful stdin-"q" stop to ffmpeg) and disable the room so it does not
+/// restart on the next cycle. Re-enable via the room switch.
+#[tauri::command]
+pub async fn stop_recording(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    room_id: String,
+) -> Result<serde_json::Value, String> {
+    {
+        let mut rooms = state.rooms.write().await;
+        let room = rooms
+            .iter_mut()
+            .find(|r| r.id == room_id)
+            .ok_or("直播间不存在")?;
+        room.enabled = false;
+        save_rooms(&state.rooms_file, &rooms)?;
+    }
+    state.recorder.stop_task_for(&app, &room_id).await;
+    Ok(serde_json::json!({ "ok": true }))
+}
+
 #[tauri::command]
 pub async fn update_room(
     app: tauri::AppHandle,

@@ -16,8 +16,10 @@ export interface RoomListResponse {
 }
 
 export interface RecordingFile {
+  room_id: string
+  anchor: string
   folder: string
-  name: string
+  file: string
   size: number
 }
 
@@ -113,6 +115,8 @@ export const api = {
   updateRoom: (id: string, patch: Partial<Pick<Room, "url" | "name" | "quality" | "enabled">>) =>
     request<{ ok: boolean }>("update_room", { id, patch }),
   deleteRoom: (id: string) => request<{ ok: boolean }>("delete_room", { id }),
+  stopRecording: (roomId: string) =>
+    request<{ ok: boolean }>("stop_recording", { roomId }),
 
   // settings
   getSettings: () => request<AppSettings>("get_settings"),
