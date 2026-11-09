@@ -104,7 +104,7 @@ pub fn run() {
 
             let mut tray = TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().expect("missing bundle icon").clone())
-                .tooltip("直播录制 LiveRecorder")
+                .tooltip("香蕉录制 BananaRecorder")
                 .menu(&tray_menu)
                 // left click opens the dashboard; right click opens this menu
                 .show_menu_on_left_click(false)

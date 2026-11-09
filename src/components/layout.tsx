@@ -9,7 +9,6 @@ import {
   LayoutDashboard,
   Minus,
   MonitorPlay,
-  Radio,
   RefreshCw,
   Settings,
   Square,
@@ -149,12 +148,12 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
       {/* Sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r bg-card md:flex">
         <div data-tauri-drag-region className="flex items-center gap-2.5 px-5 py-4">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Radio className="h-5 w-5" />
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/40">
+            <img src="banana.png" alt="banana" className="h-6 w-6 object-contain" draggable={false} />
           </div>
           <div>
-            <div className="text-sm font-semibold leading-tight">直播录制</div>
-            <div className="text-xs text-muted-foreground">LiveRecorder</div>
+            <div className="text-sm font-semibold leading-tight">香蕉录制</div>
+            <div className="text-xs text-muted-foreground">BananaRecorder</div>
           </div>
         </div>
         <nav className="flex-1 space-y-1 px-3">

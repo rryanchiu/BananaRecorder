@@ -1,4 +1,4 @@
-# LiveRecorder 直播录制
+# BananaRecorder 香蕉录制
 
 基于 **Tauri 2 + Rust + React** 的多平台直播录制桌面应用。循环值守监控直播间，主播开播自动用 ffmpeg 录制，支持画质选择、分段录制、自动转 mp4，内置视频库在线播放。
 

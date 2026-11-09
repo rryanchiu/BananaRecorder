@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "LiveRecorder",
+  "productName": "BananaRecorder",
   "version": "0.1.0",
   "identifier": "com.ryan.liverecorder",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "直播录制 LiveRecorder",
+        "title": "香蕉录制 BananaRecorder",
         "width": 1150,
         "height": 640,
         "minWidth": 1150,
