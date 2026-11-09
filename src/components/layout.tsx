@@ -141,13 +141,13 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
       {/* window top strip: own blank row — drag region + window controls */}
       <div
         data-tauri-drag-region
-        className="fixed inset-x-0 top-0 z-40 flex h-10 items-center justify-end bg-background"
+        className="fixed top-0 right-0 left-0 z-40 flex h-10 items-center justify-end bg-background md:left-56"
       >
         <WindowControls />
       </div>
 
       {/* Sidebar */}
-      <aside className="fixed bottom-0 left-0 top-10 z-30 hidden w-56 flex-col border-r bg-card md:flex">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r bg-card md:flex">
         <div data-tauri-drag-region className="flex items-center gap-2.5 px-5 py-4">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <Radio className="h-5 w-5" />
