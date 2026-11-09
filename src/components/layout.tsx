@@ -38,6 +38,32 @@ const PAGE_TITLES: Record<string, string> = {
 
 const appWindow = getCurrentWindow()
 
+/// Blank areas inside `[data-drag-zone]` containers drag the window
+/// (Notion-style); interactive controls inside them stay clickable.
+function useWindowDragZones() {
+  useEffect(() => {
+    const inDraggableSpot = (e: PointerEvent | MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (!target.closest('[data-drag-zone]')) return false
+      if (target.closest('button, a, input, select, textarea, label, [role="button"], [data-no-drag]'))
+        return false
+      return true
+    }
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.button === 0 && inDraggableSpot(e)) void appWindow.startDragging()
+    }
+    const onDblClick = (e: MouseEvent) => {
+      if (inDraggableSpot(e)) void appWindow.toggleMaximize()
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('dblclick', onDblClick)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('dblclick', onDblClick)
+    }
+  }, [])
+}
+
 /// Frameless-window controls (minimize / maximize / close) drawn in-app.
 /// Close still routes through the Rust handler → hides to tray.
 function WindowControls() {
@@ -134,20 +160,21 @@ function RecorderControls() {
 function LayoutInner({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const title = PAGE_TITLES[location.pathname] ?? '控制台'
+  useWindowDragZones()
 
   return (
     <div className="flex min-h-screen pt-10">
       {/* window top strip: own blank row — drag region + window controls */}
       <div
-        data-tauri-drag-region
+        data-drag-zone
         className="fixed top-0 right-0 left-0 z-40 flex h-10 items-center justify-end bg-background md:left-56"
       >
         <WindowControls />
       </div>
 
       {/* Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r bg-card md:flex">
-        <div data-tauri-drag-region className="flex items-center gap-2.5 px-5 py-4">
+      <aside data-drag-zone className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r bg-card md:flex">
+        <div className="flex items-center gap-2.5 px-5 py-4">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/40">
             <img src="banana.png" alt="banana" className="h-6 w-6 object-contain" draggable={false} />
           </div>
@@ -184,10 +211,10 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
       {/* Main area */}
       <div className="flex flex-1 flex-col md:pl-56">
         <header
-          data-tauri-drag-region
+          data-drag-zone
           className="sticky top-10 z-20 flex flex-col gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur md:flex-row md:items-center md:justify-between md:px-6"
         >
-          <h1 data-tauri-drag-region className="text-lg font-semibold select-none">
+          <h1 className="text-lg font-semibold select-none">
             {title}
           </h1>
           <RecorderControls />
