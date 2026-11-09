@@ -212,7 +212,7 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
             </NavLink>
           ))}
         </nav>
-        <main className="flex-1 p-4 md:p-6">{children}</main>
+        <main className="flex-1 overflow-x-hidden p-4 md:p-6">{children}</main>
       </div>
     </div>
   )

@@ -13,9 +13,9 @@
     "windows": [
       {
         "title": "直播录制 LiveRecorder",
-        "width": 980,
+        "width": 1150,
         "height": 640,
-        "minWidth": 980,
+        "minWidth": 1150,
         "minHeight": 640,
         "decorations": false
       }

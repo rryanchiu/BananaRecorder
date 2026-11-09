@@ -322,7 +322,9 @@ export default function Rooms() {
                       <Badge variant="outline">{detectPlatform(room.url)}</Badge>
                     </TableCell>
                     <TableCell>
-                      <div className="font-medium">{room.name || '（自动获取主播昵称）'}</div>
+                      <div className="min-w-0 truncate font-medium" title={room.name}>
+                        {room.name || '（自动获取主播昵称）'}
+                      </div>
                       <div className="flex items-center gap-1 text-xs text-muted-foreground">
                         <span className="max-w-xs truncate">{room.url}</span>
                         <CopyButton text={room.url} />
