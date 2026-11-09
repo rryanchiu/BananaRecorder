@@ -79,8 +79,8 @@ function RoomFormDialog({ open, onOpenChange, room, onSaved }: RoomFormDialogPro
           <DialogTitle>{isEdit ? '编辑直播间' : '添加直播间'}</DialogTitle>
           <DialogDescription>
             当前支持{SUPPORTED_PLATFORMS.join('、')}。抖音支持直播间链接、
-            主播主页链接及 App 分享的 v.douyin.com 短链（主页需主播设置了抖音号，
-            否则建议粘贴直播间分享短链）。
+            关注页链接（douyin.com/follow/live/...）、主播主页链接及 App 分享的
+            v.douyin.com 短链（主页需主播设置了抖音号，否则建议粘贴直播间分享短链）。
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">

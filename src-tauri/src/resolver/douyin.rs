@@ -37,6 +37,24 @@ pub async fn resolve(
     cookie: Option<&str>,
     proxy: Option<String>,
 ) -> Result<RoomState, String> {
+    // follow-page links (www.douyin.com/follow/live/{web_rid}?anchor_id=...)
+    // carry the plain room number — same enter api as live.douyin.com rooms
+    if url.contains("follow/live/") {
+        let web_rid = url
+            .split("follow/live/")
+            .last()
+            .unwrap_or("")
+            .split('?')
+            .next()
+            .unwrap_or("")
+            .trim_end_matches('/')
+            .to_string();
+        if web_rid.is_empty() || !web_rid.chars().all(|c| c.is_ascii_digit()) {
+            return Err("无法从关注页链接中解析直播间房间号".into());
+        }
+        return resolve_web_rid(&web_rid, quality, cookie, proxy).await;
+    }
+
     if url.contains("live.douyin.com") {
         // live room url: signed webcast api, html page parsing as fallback
         let web_rid = url
