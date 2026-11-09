@@ -345,21 +345,20 @@ export default function Rooms() {
                       </Select>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={state.variant}>{state.label}</Badge>
+                      <div className="flex items-center gap-1.5">
+                        <Badge variant={state.variant}>{state.label}</Badge>
+                        {isRecording(room) && (
+                          <button
+                            className="flex h-6 w-6 items-center justify-center rounded-md text-destructive transition-colors hover:bg-destructive/10"
+                            title="停止录制（同时停用监控，可重新打开开关恢复）"
+                            onClick={() => void stopRecording(room)}
+                          >
+                            <CircleStop className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="pr-4 text-right">
-                      {isRecording(room) && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 text-destructive"
-                          title="停止该直播间的录制（同时停用监控）"
-                          onClick={() => void stopRecording(room)}
-                        >
-                          <CircleStop />
-                          停止录制
-                        </Button>
-                      )}
                       <Button
                         variant="ghost"
                         size="icon"
