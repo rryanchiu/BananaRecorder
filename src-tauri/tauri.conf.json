@@ -17,7 +17,8 @@
         "height": 640,
         "minWidth": 1150,
         "minHeight": 640,
-        "decorations": false
+        "decorations": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --enable-features=msOverlayScrollbarWinStyle"
       }
     ],
     "security": {
