@@ -1,6 +1,20 @@
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { FolderOpen, LayoutDashboard, MonitorPlay, Radio, Settings, CirclePlay, CircleStop, RefreshCw } from 'lucide-react'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import {
+  CirclePlay,
+  CircleStop,
+  Copy,
+  FolderOpen,
+  LayoutDashboard,
+  Minus,
+  MonitorPlay,
+  Radio,
+  RefreshCw,
+  Settings,
+  Square,
+  X,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -21,6 +35,49 @@ const PAGE_TITLES: Record<string, string> = {
   '/rooms': '直播间管理',
   '/videos': '视频库',
   '/settings': '录制设置',
+}
+
+const appWindow = getCurrentWindow()
+
+/// Frameless-window controls (minimize / maximize / close) drawn in-app.
+/// Close still routes through the Rust handler → hides to tray.
+function WindowControls() {
+  const [maximized, setMaximized] = useState(false)
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null
+    const update = async () => setMaximized(await appWindow.isMaximized())
+    void update()
+    void appWindow.onResized(() => void update()).then((fn) => {
+      unlisten = fn
+    })
+    return () => unlisten?.()
+  }, [])
+
+  const btn =
+    'flex h-10 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground'
+
+  return (
+    <div className="flex items-center">
+      <button className={btn} title="最小化" onClick={() => void appWindow.minimize()}>
+        <Minus className="h-4 w-4" />
+      </button>
+      <button
+        className={btn}
+        title={maximized ? '还原' : '最大化'}
+        onClick={() => void appWindow.toggleMaximize()}
+      >
+        {maximized ? <Copy className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+      </button>
+      <button
+        className="flex h-10 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-red-500 hover:text-white"
+        title="关闭（隐藏到托盘，后台继续监控）"
+        onClick={() => void appWindow.close()}
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  )
 }
 
 function RecorderControls() {
@@ -83,7 +140,7 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen">
       {/* Sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r bg-card md:flex">
-        <div className="flex items-center gap-2.5 px-5 py-5">
+        <div data-tauri-drag-region className="flex items-center gap-2.5 px-5 py-4">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <Radio className="h-5 w-5" />
           </div>
@@ -119,9 +176,17 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
 
       {/* Main area */}
       <div className="flex flex-1 flex-col md:pl-56">
-        <header className="sticky top-0 z-20 flex flex-col gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur md:flex-row md:items-center md:justify-between md:px-6">
-          <h1 className="text-lg font-semibold">{title}</h1>
-          <RecorderControls />
+        <header
+          data-tauri-drag-region
+          className="sticky top-0 z-20 flex flex-col gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur md:flex-row md:items-center md:justify-between md:px-6"
+        >
+          <h1 data-tauri-drag-region className="text-lg font-semibold select-none">
+            {title}
+          </h1>
+          <div className="flex items-center justify-between gap-3 md:justify-end">
+            <RecorderControls />
+            <WindowControls />
+          </div>
         </header>
         {/* mobile nav */}
         <nav className="flex items-center gap-1 overflow-x-auto border-b px-2 py-1.5 md:hidden">
