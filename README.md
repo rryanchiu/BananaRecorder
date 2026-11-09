@@ -51,3 +51,16 @@ cargo test -- --ignored --nocapture # 真实网络测试（四平台解析 + B�
 - **优雅停止**：向 ffmpeg stdin 写 `q` 保证容器索引完整（mp4 不损坏），不用 SIGKILL
 - **设置/房间**持久化在 `%APPDATA%/com.ryan.liverecorder/`，录像默认存 `%APPDATA%/com.ryan.liverecorder/downloads`
 - 抖音签名算法来自 [DouyinLiveRecorder](https://github.com/ihmily/DouyinLiveRecorder)（MIT）的 `ab_sign.py`，已逐字节对拍移植
+
+## 致谢与开源说明
+
+- 本项目的抖音 a_bogus 签名、虎牙防串签算法及部分平台直播源解析**移植自
+  [DouyinLiveRecorder](https://github.com/ihmily/DouyinLiveRecorder)**（MIT），
+  详细的移植范围与原项目许可声明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
+- UI 基于 [shadcn/ui](https://ui.shadcn.com) 与 [Radix UI](https://www.radix-ui.com)；
+  FFmpeg 为独立第三方构建，其分发许可说明同样见 THIRD-PARTY-NOTICES.md
+
+## License / 许可
+
+本项目代码以 MIT 协议开源；所打包的 FFmpeg 为 GPL 构建，分发安装包时请遵循
+THIRD-PARTY-NOTICES.md 中的对应说明。
