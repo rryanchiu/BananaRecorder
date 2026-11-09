@@ -137,9 +137,17 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
   const title = PAGE_TITLES[location.pathname] ?? '控制台'
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen pt-10">
+      {/* window top strip: own blank row — drag region + window controls */}
+      <div
+        data-tauri-drag-region
+        className="fixed inset-x-0 top-0 z-40 flex h-10 items-center justify-end bg-background"
+      >
+        <WindowControls />
+      </div>
+
       {/* Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r bg-card md:flex">
+      <aside className="fixed bottom-0 left-0 top-10 z-30 hidden w-56 flex-col border-r bg-card md:flex">
         <div data-tauri-drag-region className="flex items-center gap-2.5 px-5 py-4">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <Radio className="h-5 w-5" />
@@ -178,15 +186,12 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
       <div className="flex flex-1 flex-col md:pl-56">
         <header
           data-tauri-drag-region
-          className="sticky top-0 z-20 flex flex-col gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur md:flex-row md:items-center md:justify-between md:px-6"
+          className="sticky top-10 z-20 flex flex-col gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur md:flex-row md:items-center md:justify-between md:px-6"
         >
           <h1 data-tauri-drag-region className="text-lg font-semibold select-none">
             {title}
           </h1>
-          <div className="flex items-center justify-between gap-3 md:justify-end">
-            <RecorderControls />
-            <WindowControls />
-          </div>
+          <RecorderControls />
         </header>
         {/* mobile nav */}
         <nav className="flex items-center gap-1 overflow-x-auto border-b px-2 py-1.5 md:hidden">
