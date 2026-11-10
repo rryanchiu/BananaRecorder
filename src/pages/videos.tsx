@@ -30,13 +30,22 @@ interface PlayerState {
   playable: boolean
 }
 
+interface DeleteTarget {
+  path: string
+  name: string
+  isDir: boolean
+  size?: number
+  fileCount?: number
+  totalSize?: number
+}
+
 export default function Videos() {
   const [data, setData] = useState<VideoListResponse | null>(null)
   const [path, setPath] = useState('')
   const [loading, setLoading] = useState(true)
   const [keyword, setKeyword] = useState('')
   const [player, setPlayer] = useState<PlayerState | null>(null)
-  const [deleting, setDeleting] = useState<VideoFile | null>(null)
+  const [deleting, setDeleting] = useState<DeleteTarget | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [batchDeleting, setBatchDeleting] = useState(false)
   const [batchBusy, setBatchBusy] = useState<'' | 'merge' | 'transcode'>('')
@@ -82,7 +91,9 @@ export default function Videos() {
 
   // ----- selection helpers -----
   const allSelected =
-    filteredFiles.length > 0 && filteredFiles.every((f) => selected.has(f.path))
+    filteredFiles.length + filteredDirs.length > 0 &&
+    filteredFiles.every((f) => selected.has(f.path)) &&
+    filteredDirs.every((d) => selected.has(d.path))
   const toggleSelect = (path: string) => {
     setSelected((prev) => {
       const next = new Set(prev)
@@ -95,11 +106,15 @@ export default function Videos() {
     if (allSelected) {
       setSelected(new Set())
     } else {
-      setSelected(new Set(filteredFiles.map((f) => f.path)))
+      setSelected(new Set([...filteredDirs.map((d) => d.path), ...filteredFiles.map((f) => f.path)]))
     }
   }
   const selectedFiles = useMemo(
     () => (data?.files ?? []).filter((f) => selected.has(f.path)),
+    [data, selected]
+  )
+  const selectedDirs = useMemo(
+    () => (data?.dirs ?? []).filter((d) => selected.has(d.path)),
     [data, selected]
   )
   const selectedExts = useMemo(
@@ -107,14 +122,14 @@ export default function Videos() {
     [selectedFiles]
   )
   const mergeDisabled =
-    selected.size < 2 || (selectedExts.size > 1 ? true : false)
+    selectedDirs.length > 0 || selectedFiles.length < 2 || selectedExts.size > 1
 
   // ----- batch actions -----
   const confirmBatchDelete = async () => {
     setBatchDeleting(false)
     try {
       const result = await api.deleteVideos([...selected])
-      toast.success(`已删除 ${result.deleted} 个文件${result.failed ? `，${result.failed} 个失败` : ''}`)
+      toast.success(`已删除 ${result.deleted} 项${result.failed ? `，${result.failed} 个失败` : ''}`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '批量删除失败')
     }
@@ -158,7 +173,7 @@ export default function Videos() {
     if (!deleting) return
     try {
       await api.deleteVideo(deleting.path)
-      toast.success('已删除')
+      toast.success(deleting.isDir ? '文件夹已删除' : '已删除')
       setDeleting(null)
       void load(path)
     } catch (err) {
@@ -171,18 +186,22 @@ export default function Videos() {
       {/* batch action bar */}
       {selected.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-primary/5 px-4 py-2.5">
-          <span className="text-sm font-medium">已选 {selected.size} 个视频</span>
+          <span className="text-sm font-medium">
+            已选 {selectedFiles.length} 个视频{selectedDirs.length > 0 ? `、${selectedDirs.length} 个文件夹` : ''}
+          </span>
           <div className="ml-auto flex items-center gap-2">
             <Button
               size="sm"
               variant="outline"
               disabled={mergeDisabled || batchBusy !== ''}
               title={
-                selected.size < 2
-                  ? '合并至少需要选择两个视频'
-                  : selectedExts.size > 1
-                    ? '所选视频格式不一致，请先批量转码'
-                    : '按录制时间顺序无损拼接为一个文件（原文件保留）'
+                selectedDirs.length > 0
+                  ? '所选内容包含文件夹，合并仅支持视频文件'
+                  : selectedFiles.length < 2
+                    ? '合并至少需要选择两个视频'
+                    : selectedExts.size > 1
+                      ? '所选视频格式不一致，请先批量转码'
+                      : '按录制时间顺序无损拼接为一个文件（原文件保留）'
               }
               onClick={() => void doMerge()}
             >
@@ -192,8 +211,12 @@ export default function Videos() {
             <Button
               size="sm"
               variant="outline"
-              disabled={batchBusy !== ''}
-              title="将所选视频无损转为 mp4（已是 mp4 的自动跳过）"
+              disabled={selectedDirs.length > 0 || batchBusy !== ''}
+              title={
+                selectedDirs.length > 0
+                  ? '所选内容包含文件夹，转码仅支持视频文件'
+                  : '将所选视频无损转为 mp4（已是 mp4 的自动跳过）'
+              }
               onClick={() => void doTranscode()}
             >
               <FileVideo />
@@ -284,7 +307,7 @@ export default function Videos() {
                   className="h-4 w-4 cursor-pointer accent-primary"
                   checked={allSelected}
                   onChange={toggleSelectAll}
-                  title="全选本目录视频"
+                  title="全选本目录内容"
                 />
               </TableHead>
               <TableHead className="pl-2">文件名</TableHead>
@@ -321,11 +344,17 @@ export default function Videos() {
                       if (event.key === 'Enter') void load(dir.path)
                     }}
                   >
-                    <TableCell className="pl-4">
-                      <Folder className="h-4 w-4 text-primary" />
+                    <TableCell className="pl-4" onClick={(event) => event.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 cursor-pointer accent-primary"
+                        checked={selected.has(dir.path)}
+                        onChange={() => toggleSelect(dir.path)}
+                      />
                     </TableCell>
                     <TableCell className="pl-2">
                       <div className="flex items-center gap-3">
+                        <Folder className="h-4 w-4 shrink-0 text-primary" />
                         <span className="max-w-md truncate font-medium" title={dir.name}>
                           {dir.name}
                         </span>
@@ -336,8 +365,42 @@ export default function Videos() {
                     </TableCell>
                     <TableCell>{formatBytes(dir.total_size)}</TableCell>
                     <TableCell className="text-muted-foreground">—</TableCell>
-                    <TableCell className="pr-4 text-right">
-                      <ChevronRight className="ml-auto h-4 w-4 text-muted-foreground" />
+                    <TableCell
+                      className="whitespace-nowrap pr-4 text-right"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8"
+                        title="在文件管理器中打开"
+                        onClick={() =>
+                          void api
+                            .openVideoFolder(dir.path)
+                            .then(() => toast.success('已在文件管理器中打开'))
+                            .catch((err) => toast.error(err.message))
+                        }
+                      >
+                        <ExternalLink />
+                        打开
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive"
+                        title="删除文件夹（含全部内容）"
+                        onClick={() =>
+                          setDeleting({
+                            path: dir.path,
+                            name: dir.name,
+                            isDir: true,
+                            fileCount: dir.file_count,
+                            totalSize: dir.total_size,
+                          })
+                        }
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -402,7 +465,9 @@ export default function Videos() {
                         size="icon"
                         className="h-8 w-8 text-destructive"
                         title="删除文件"
-                        onClick={() => setDeleting(file)}
+                        onClick={() =>
+                          setDeleting({ path: file.path, name: file.name, isDir: false, size: file.size })
+                        }
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -451,10 +516,12 @@ export default function Videos() {
       <Dialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>删除视频文件</DialogTitle>
+            <DialogTitle>{deleting?.isDir ? '删除文件夹' : '删除视频文件'}</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            确定要删除「{deleting?.name}」（{deleting ? formatBytes(deleting.size) : ''}）吗？此操作不可恢复。
+            {deleting?.isDir
+              ? `确定要删除文件夹「${deleting.name}」（${deleting.fileCount} 个视频，共 ${formatBytes(deleting.totalSize ?? 0)}）吗？文件夹内全部内容将被删除，此操作不可恢复。`
+              : `确定要删除「${deleting?.name}」（${deleting && !deleting.isDir ? formatBytes(deleting.size ?? 0) : ''}）吗？此操作不可恢复。`}
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setDeleting(null)}>
@@ -474,7 +541,8 @@ export default function Videos() {
             <DialogTitle>批量删除视频</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            确定要删除选中的 {selected.size} 个视频文件吗？此操作不可恢复。
+            确定要删除选中的 {selectedFiles.length} 个视频
+            {selectedDirs.length > 0 ? `、${selectedDirs.length} 个文件夹（含全部内容）` : ''}吗？此操作不可恢复。
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setBatchDeleting(false)}>

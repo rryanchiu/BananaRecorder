@@ -960,8 +960,15 @@ pub async fn delete_videos(state: State<'_, AppState>, paths: Vec<String>) -> Re
     let mut failed = 0u64;
     for path in &paths {
         match resolve_under_root(&root, path) {
-            Ok(target) if target.is_file() && target != root => {
-                if std::fs::remove_file(&target).is_ok() {
+            Ok(target) if target != root => {
+                let ok = if target.is_file() {
+                    std::fs::remove_file(&target).is_ok()
+                } else if target.is_dir() {
+                    std::fs::remove_dir_all(&target).is_ok()
+                } else {
+                    false
+                };
+                if ok {
                     deleted += 1;
                 } else {
                     failed += 1;
