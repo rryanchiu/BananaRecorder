@@ -368,6 +368,26 @@ async fn room_task(
         handle.clear_recording(&room.id).await;
         let recorded_secs = started.elapsed().as_secs();
 
+        // surface ffmpeg's own error text; without it a failed segment only
+        // shows a bare exit code (e.g. Some(-22))
+        if exit_code != Some(0) {
+            let tail = process.stderr_tail();
+            let detail = if tail.trim().is_empty() {
+                String::new()
+            } else {
+                format!("，ffmpeg 输出: {}", tail.trim())
+            };
+            handle.log(
+                &app,
+                "ERROR",
+                &format!(
+                    "[{}] {} 录制异常结束（{recorded_secs}秒, 退出码 {exit_code:?}）{detail}",
+                    platform.display_name(),
+                    anchor_clean
+                ),
+            );
+        }
+
         // post conversion (main.py: ts → mp4; flv → mp4)
         if settings.convert_to_mp4 && (ext == "ts" || ext == "flv") {
             let final_file = active_file(&dir, &filename_base, &ext);

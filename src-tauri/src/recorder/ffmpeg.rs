@@ -127,11 +127,13 @@ pub fn install_supported() -> bool {
 
 #[cfg(target_os = "windows")]
 fn install_url() -> Result<&'static str, String> {
-    // BtbN publishes static LGPL builds (no GPL-only codecs).
+    // BtbN publishes static LGPL builds (no GPL-only codecs). Pin to the 8.1
+    // release branch instead of the rolling master build: master churn broke
+    // recordings once already (strict input/output option validation).
     Ok(if cfg!(target_arch = "aarch64") {
-        "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-winarm64-lgpl.zip"
+        "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-winarm64-lgpl-8.1.zip"
     } else {
-        "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip"
+        "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-lgpl-8.1.zip"
     })
 }
 
@@ -384,6 +386,7 @@ pub fn build_args(spec: &RecordSpec) -> Vec<String> {
     };
 
     let mut args: Vec<String> = vec![
+        // ---- input options (ffmpeg >= 8 rejects input options given after -i) ----
         "-y".into(),
         "-v".into(), "verbose".into(),
         "-rw_timeout".into(), rw_timeout.to_string(),
@@ -392,27 +395,36 @@ pub fn build_args(spec: &RecordSpec) -> Vec<String> {
         "-user_agent".into(), BASE_UA.into(),
         "-protocol_whitelist".into(),
         "rtmp,crypto,file,http,https,tcp,tls,udp,rtp,httpproxy".into(),
-        "-thread_queue_size".into(), "1024".into(),
         "-analyzeduration".into(), analyze.to_string(),
         "-probesize".into(), probe.to_string(),
         "-fflags".into(), "+discardcorrupt".into(),
+        // http reconnection belongs to the input protocol (older ffmpeg silently
+        // dropped these when given on the output side, so reconnection never worked).
+        // explicit values: the CLI cannot infer protocol bool flags on its own
+        "-reconnect_delay_max".into(), "60".into(),
+        "-reconnect_streamed".into(), "1".into(),
+        "-reconnect_at_eof".into(), "1".into(),
+        "-correct_ts_overflow".into(), "1".into(),
         "-re".into(),
         "-i".into(), spec.stream_url.into(),
+        // ---- output options ----
+        "-thread_queue_size".into(), "1024".into(),
         "-bufsize".into(), bufsize.into(),
         "-sn".into(),
         "-dn".into(),
-        "-reconnect_delay_max".into(), "60".into(),
-        "-reconnect_streamed".into(),
-        "-reconnect_at_eof".into(),
         "-max_muxing_queue_size".into(), mux_queue.into(),
-        "-correct_ts_overflow".into(), "1".into(),
         "-avoid_negative_ts".into(), "1".into(),
     ];
 
     if !spec.extra_headers.is_empty() {
         let headers = format!("{}\r\n", spec.extra_headers);
-        args.insert(11, "-headers".into());
-        args.insert(12, headers);
+        // anchor on the protocol whitelist so the option order above can shift freely
+        let pos = args
+            .iter()
+            .position(|a| a == "-protocol_whitelist")
+            .unwrap_or(args.len());
+        args.insert(pos, "-headers".into());
+        args.insert(pos + 1, headers);
     }
     if let Some(proxy) = spec.proxy {
         args.insert(1, "-http_proxy".into());
@@ -437,7 +449,12 @@ pub fn build_args(spec: &RecordSpec) -> Vec<String> {
 pub struct RecordingProcess {
     child: Child,
     stopped: Arc<AtomicBool>,
+    stderr_tail: Arc<std::sync::Mutex<String>>,
 }
+
+/// Size cap for the captured stderr tail, so verbose ffmpeg output cannot grow
+/// the buffer unboundedly over a long recording.
+const STDERR_TAIL_BYTES: usize = 8 * 1024;
 
 impl RecordingProcess {
     pub fn spawn(ffmpeg: &Path, args: &[String]) -> Result<Self, String> {
@@ -448,11 +465,44 @@ impl RecordingProcess {
             // ffmpeg writes progress/error info to stderr; keep it for debugging
             .stderr(std::process::Stdio::piped());
         hide_console(&mut cmd);
-        let child = cmd.spawn().map_err(|e| format!("启动 ffmpeg 失败: {e}"))?;
+        let mut child = cmd.spawn().map_err(|e| format!("启动 ffmpeg 失败: {e}"))?;
+
+        // drain stderr in the background: unread pipe data eventually blocks
+        // the child, and the tail is the only way to see why a recording died
+        let stderr_tail = Arc::new(std::sync::Mutex::new(String::new()));
+        if let Some(mut stderr) = child.stderr.take() {
+            let tail = Arc::clone(&stderr_tail);
+            tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut chunk = [0u8; 4096];
+                loop {
+                    match stderr.read(&mut chunk).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            let mut buf = tail.lock().expect("stderr tail lock");
+                            buf.push_str(&String::from_utf8_lossy(&chunk[..n]));
+                            let excess = buf.len().saturating_sub(STDERR_TAIL_BYTES);
+                            if excess > 0 {
+                                let drop_to = (excess + 512).min(buf.len());
+                                buf.drain(..drop_to);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
         Ok(Self {
             child,
             stopped: Arc::new(AtomicBool::new(false)),
+            stderr_tail,
         })
+    }
+
+    /// The last few KB of ffmpeg stderr, for error reporting when a
+    /// recording exits abnormally.
+    pub fn stderr_tail(&self) -> String {
+        self.stderr_tail.lock().expect("stderr tail lock").clone()
     }
 
     pub fn pid(&self) -> Option<u32> {
