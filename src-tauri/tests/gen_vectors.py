@@ -4,11 +4,14 @@ Generate ab_sign test vectors with a fixed timestamp so the Rust port can be
 diffed 1:1. Output: src-tauri/tests/testdata/ab_vectors.json
 """
 import json
+from pathlib import Path
 import sys
 import time
 import types
 
-sys.path.insert(0, r"D:\Workspace\DouyinLiveRecorder")
+# Optional reference checkout, only needed when regenerating test vectors.
+reference_root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[3] / "DouyinLiveRecorder"
+sys.path.insert(0, str(reference_root))
 
 from src import ab_sign  # noqa: E402
 
@@ -63,7 +66,7 @@ vectors["result_encrypt_s4"] = ab_sign.result_encrypt(
     "".join(chr(b) for b in [1, 2, 3, 4, 5, 6]), "s4"
 )
 
-out_path = r"D:\Workspace\LiveRecorder\src-tauri\tests\testdata\ab_vectors.json"
+out_path = Path(__file__).resolve().parent / "testdata" / "ab_vectors.json"
 import os
 os.makedirs(os.path.dirname(out_path), exist_ok=True)
 with open(out_path, "w", encoding="utf-8") as fh:
