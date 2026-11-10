@@ -273,40 +273,7 @@ export default function Videos() {
         </div>
       </div>
 
-      {/* summary */}
-      <div className="text-sm text-muted-foreground">
-        保存路径：<span className="font-mono">{data?.root ?? '...'}</span>
-        {data && (
-          <span className="ml-3">
-            {data.dirs.length} 个文件夹 / {data.files.length} 个视频（当前目录 {formatBytes(data.total_size)}）
-          </span>
-        )}
-      </div>
-
-      {/* dirs */}
-      {filteredDirs.length > 0 && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filteredDirs.map((dir) => (
-            <button
-              key={dir.path}
-              className="group flex items-center gap-3 rounded-xl border bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent"
-              onClick={() => void load(dir.path)}
-            >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary dark:bg-primary/20">
-                <Folder className="h-5 w-5" />
-              </div>
-              <div className="min-w-0">
-                <div className="truncate font-medium group-hover:underline">{dir.name}</div>
-                <div className="text-xs text-muted-foreground">
-                  {dir.file_count} 个视频 · {formatBytes(dir.total_size)}
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* files */}
+      {/* folders and files */}
       <div className="rounded-xl border bg-card">
         <Table>
           <TableHeader>
@@ -333,17 +300,48 @@ export default function Videos() {
                   加载中...
                 </TableCell>
               </TableRow>
-            ) : filteredFiles.length === 0 ? (
+            ) : filteredDirs.length === 0 && filteredFiles.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
                   <div className="flex flex-col items-center gap-2">
                     <FolderOpen className="h-8 w-8 opacity-40" />
-                    当前目录暂无视频文件
+                    {keyword.trim() ? '没有匹配的文件或文件夹' : '当前目录为空'}
                   </div>
                 </TableCell>
               </TableRow>
             ) : (
-              filteredFiles.map((file) => {
+              <>
+                {filteredDirs.map((dir) => (
+                  <TableRow
+                    key={dir.path}
+                    className="cursor-pointer"
+                    tabIndex={0}
+                    onClick={() => void load(dir.path)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') void load(dir.path)
+                    }}
+                  >
+                    <TableCell className="pl-4">
+                      <Folder className="h-4 w-4 text-primary" />
+                    </TableCell>
+                    <TableCell className="pl-2">
+                      <div className="flex items-center gap-3">
+                        <span className="max-w-md truncate font-medium" title={dir.name}>
+                          {dir.name}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {dir.file_count} 个视频
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell>{formatBytes(dir.total_size)}</TableCell>
+                    <TableCell className="text-muted-foreground">—</TableCell>
+                    <TableCell className="pr-4 text-right">
+                      <ChevronRight className="ml-auto h-4 w-4 text-muted-foreground" />
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {filteredFiles.map((file) => {
                 const playable = PLAYABLE_EXTS.has(file.ext)
                 const checked = selected.has(file.path)
                 return (
@@ -411,7 +409,8 @@ export default function Videos() {
                     </TableCell>
                   </TableRow>
                 )
-              })
+                })}
+              </>
             )}
           </TableBody>
         </Table>

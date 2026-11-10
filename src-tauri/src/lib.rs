@@ -12,9 +12,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::TrayIconBuilder,
     Emitter, Manager,
 };
+#[cfg(not(target_os = "macos"))]
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tokio::sync::RwLock;
 
 pub struct AppState {
@@ -35,6 +37,26 @@ fn show_main(app: &tauri::AppHandle, route: &str) {
         let _ = window.show();
         let _ = window.set_focus();
         let _ = window.emit("app://navigate", route);
+    }
+}
+
+/// macOS: replace the menu-bar banana with the active recording count, and
+/// restore the banana when nothing is recording.
+#[cfg(target_os = "macos")]
+fn update_tray_badge(app: &tauri::AppHandle, count: usize) {
+    let Some(tray) = app.tray_by_id("main-tray") else {
+        return;
+    };
+    if count > 0 {
+        // set the title before dropping the icon so the status item never
+        // collapses to zero width between the two calls
+        let _ = tray.set_title(Some(count.to_string()));
+        let _ = tray.set_icon(None);
+    } else {
+        if let Some(icon) = app.default_window_icon() {
+            let _ = tray.set_icon(Some(icon.clone()));
+        }
+        let _ = tray.set_title(None::<&str>);
     }
 }
 
@@ -133,13 +155,17 @@ pub fn run() {
                 &[&open_dashboard, &open_videos, &open_rooms, &quit],
             )?;
 
-            let mut tray = TrayIconBuilder::with_id("main-tray")
+            let builder = TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().expect("missing bundle icon").clone())
                 .tooltip("香蕉录制 BananaRecorder")
-                .menu(&tray_menu)
-                // left click opens the dashboard; right click opens this menu
-                .show_menu_on_left_click(false)
-                .build(app)?;
+                .menu(&tray_menu);
+            // macOS convention: clicking the menu-bar item opens the menu.
+            // Windows/Linux keep left-click → dashboard (menu on right click).
+            #[cfg(target_os = "macos")]
+            let builder = builder.show_menu_on_left_click(true);
+            #[cfg(not(target_os = "macos"))]
+            let builder = builder.show_menu_on_left_click(false);
+            let tray = builder.build(app)?;
             tray.on_menu_event(|app, event| match event.id.as_ref() {
                 "open_dashboard" => show_main(app, "/"),
                 "open_videos" => show_main(app, "/videos"),
@@ -157,8 +183,9 @@ pub fn run() {
                 }
                 _ => {}
             });
+            // Windows/Linux only: left click opens the dashboard.
+            #[cfg(not(target_os = "macos"))]
             tray.on_tray_icon_event(|tray, event| {
-                // single or double left click both open the dashboard
                 let clicked = matches!(
                     event,
                     TrayIconEvent::Click {
@@ -178,6 +205,7 @@ pub fn run() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 // push aggregated status to the frontend every 2 seconds
+                let mut last_recordings = 0usize;
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     let status = {
@@ -185,6 +213,12 @@ pub fn run() {
                         commands::get_status(state).await
                     };
                     if let Ok(status) = status {
+                        let count = status.recording_files.len();
+                        if count != last_recordings {
+                            last_recordings = count;
+                            #[cfg(target_os = "macos")]
+                            update_tray_badge(&handle, count);
+                        }
                         let _ = handle.emit("recorder://status", status);
                     }
                 }
@@ -215,6 +249,7 @@ pub fn run() {
             commands::stop_recording,
             commands::get_settings,
             commands::update_settings,
+            commands::check_update,
             commands::get_ffmpeg_status,
             commands::set_ffmpeg_path,
             commands::install_ffmpeg,

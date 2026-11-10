@@ -78,6 +78,17 @@ export interface FfmpegInstallProgress {
   total: number | null
 }
 
+export interface UpdateInfo {
+  current_version: string
+  latest_version: string
+  available: boolean
+  name: string
+  notes: string
+  html_url: string
+  published_at: string
+  download_url: string | null
+}
+
 export interface VideoDir {
   name: string
   path: string
@@ -157,6 +168,9 @@ export const api = {
     }>("check_save_path_change", { newPath }),
   migrateSavePath: (newPath: string) =>
     request<{ moved: number; skipped: number; failed: number }>("migrate_save_path", { newPath }),
+
+  // updates
+  checkUpdate: () => request<UpdateInfo>("check_update"),
 
   // ffmpeg runtime
   getFfmpegStatus: () => request<FfmpegStatus>("get_ffmpeg_status"),

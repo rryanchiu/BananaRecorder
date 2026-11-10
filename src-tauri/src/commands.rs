@@ -413,6 +413,150 @@ pub async fn install_ffmpeg(
 }
 
 // ---------------------------------------------------------------------------
+// updates (GitHub Releases)
+// ---------------------------------------------------------------------------
+
+const LATEST_RELEASE_API: &str =
+    "https://api.github.com/repos/rryanchiu/BananaRecorder/releases/latest";
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub available: bool,
+    pub name: String,
+    pub notes: String,
+    pub html_url: String,
+    pub published_at: String,
+    pub download_url: Option<String>,
+}
+
+/// Numeric version comparison (`v` prefix and pre-release suffixes ignored).
+fn version_gt(candidate: &str, current: &str) -> bool {
+    fn parts(value: &str) -> Vec<u64> {
+        let value = value.trim();
+        let value = value
+            .strip_prefix('v')
+            .or_else(|| value.strip_prefix('V'))
+            .unwrap_or(value);
+        value
+            .split(|c: char| !c.is_ascii_digit())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse().unwrap_or(0))
+            .collect()
+    }
+    let candidate = parts(candidate);
+    let current = parts(current);
+    for i in 0..candidate.len().max(current.len()) {
+        let a = *candidate.get(i).unwrap_or(&0);
+        let b = *current.get(i).unwrap_or(&0);
+        if a != b {
+            return a > b;
+        }
+    }
+    false
+}
+
+/// Latest GitHub release, compared with the running app version.
+#[tauri::command]
+pub async fn check_update(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<UpdateInfo, String> {
+    let current_version = app.package_info().version.to_string();
+    let mut builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent(format!("BananaRecorder/{current_version}"));
+    if let Some(proxy) = state.settings.read().await.proxy_url() {
+        builder = builder.proxy(reqwest::Proxy::all(&proxy).map_err(|e| e.to_string())?);
+    }
+    let client = builder.build().map_err(|e| e.to_string())?;
+
+    let response = client
+        .get(LATEST_RELEASE_API)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("检查更新失败: {e}"))?;
+
+    // no published release yet — not an error
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(UpdateInfo {
+            current_version: current_version.clone(),
+            latest_version: current_version,
+            available: false,
+            name: String::new(),
+            notes: String::new(),
+            html_url: String::new(),
+            published_at: String::new(),
+            download_url: None,
+        });
+    }
+    if !response.status().is_success() {
+        return Err(format!("检查更新失败: HTTP {}", response.status()));
+    }
+
+    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    let tag = json
+        .get("tag_name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let latest_version = tag
+        .strip_prefix('v')
+        .or_else(|| tag.strip_prefix('V'))
+        .unwrap_or(tag)
+        .to_string();
+    let available = !latest_version.is_empty() && version_gt(&latest_version, &current_version);
+    let download_url = json
+        .get("assets")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|assets| {
+            assets.iter().find_map(|asset| {
+                let name = asset.get("name")?.as_str()?.to_ascii_lowercase();
+                if name.ends_with(".exe")
+                    || name.ends_with(".msi")
+                    || name.ends_with(".dmg")
+                    || name.ends_with(".app.tar.gz")
+                {
+                    asset
+                        .get("browser_download_url")?
+                        .as_str()
+                        .map(str::to_string)
+                } else {
+                    None
+                }
+            })
+        });
+
+    Ok(UpdateInfo {
+        current_version,
+        latest_version,
+        available,
+        name: json
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        notes: json
+            .get("body")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        html_url: json
+            .get("html_url")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        published_at: json
+            .get("published_at")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        download_url,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // save path migration
 // ---------------------------------------------------------------------------
 
@@ -970,5 +1114,14 @@ mod disk_tests {
     #[test]
     fn missing_paths_do_not_panic() {
         let _ = disk_free_bytes(Path::new("/definitely/not/a/real/path"));
+    }
+
+    #[test]
+    fn version_gt_compares_numerically() {
+        assert!(version_gt("0.2.0", "0.1.9"));
+        assert!(version_gt("1.0.0", "0.9.9"));
+        assert!(version_gt("v0.10.0", "v0.9.0"));
+        assert!(!version_gt("0.1.0", "0.1.0"));
+        assert!(!version_gt("0.1.0", "0.2.0"));
     }
 }

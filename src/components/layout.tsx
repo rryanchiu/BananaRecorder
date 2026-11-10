@@ -20,9 +20,17 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { useStatus } from '@/lib/status'
 import { StatusProvider } from '@/lib/status'
-import { api } from '@/lib/api'
+import { api, type UpdateInfo } from '@/lib/api'
 
 const NAV_ITEMS = [
   { to: '/', label: '仪表盘', icon: LayoutDashboard },
@@ -51,26 +59,89 @@ function GitHubMark({ className }: { className?: string }) {
 
 function GitHubFooter() {
   const [version, setVersion] = useState('')
+  const [update, setUpdate] = useState<UpdateInfo | null>(null)
+  const [updateOpen, setUpdateOpen] = useState(false)
 
   useEffect(() => {
     void getVersion()
       .then(setVersion)
       .catch(() => {})
+
+    const check = () => {
+      void api
+        .checkUpdate()
+        .then((info) => {
+          if (info.available) setUpdate(info)
+        })
+        .catch(() => {})
+    }
+    check()
+    const timer = window.setInterval(check, 6 * 60 * 60 * 1000)
+    return () => window.clearInterval(timer)
   }, [])
 
+  const openRelease = () => {
+    const url = update?.download_url || update?.html_url
+    if (!url) return
+    void openUrl(url).catch(() => {})
+    setUpdateOpen(false)
+  }
+
   return (
-    <a
-      href={REPO_URL}
-      title="在 GitHub 上查看 BananaRecorder"
-      onClick={(event) => {
-        event.preventDefault()
-        void openUrl(REPO_URL).catch(() => {})
-      }}
-      className="flex items-center gap-2 px-5 py-4 text-xs text-muted-foreground transition-colors hover:text-foreground"
-    >
-      <GitHubMark className="h-4 w-4" />
-      <span>{version ? `v${version}` : 'GitHub'}</span>
-    </a>
+    <>
+      <div className="flex items-center justify-between gap-2 px-5 py-4 text-xs">
+        <button
+          type="button"
+          title="在 GitHub 上查看 BananaRecorder"
+          onClick={() => void openUrl(REPO_URL).catch(() => {})}
+          className="flex min-w-0 items-center gap-2 text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <GitHubMark className="h-4 w-4 shrink-0" />
+          <span className="truncate">{version ? `v${version}` : 'GitHub'}</span>
+        </button>
+        {update && (
+          <button
+            type="button"
+            title={`发现新版本 v${update.latest_version}`}
+            onClick={() => setUpdateOpen(true)}
+            className="shrink-0 whitespace-nowrap rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium text-primary transition-colors hover:bg-primary/25"
+          >
+            更新 v{update.latest_version}
+          </button>
+        )}
+      </div>
+
+      <Dialog open={updateOpen} onOpenChange={setUpdateOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>发现新版本 v{update?.latest_version}</DialogTitle>
+            <DialogDescription>
+              当前 v{update?.current_version ?? version} · 发布于{' '}
+              {update?.published_at
+                ? new Date(update.published_at).toLocaleDateString()
+                : '—'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 text-sm">
+            {update?.notes?.trim() || '本次更新暂无说明。'}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            下载安装包后覆盖安装即可，已有设置和录像文件不受影响。
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUpdateOpen(false)}>
+              稍后
+            </Button>
+            <Button
+              onClick={openRelease}
+              disabled={!update?.download_url && !update?.html_url}
+            >
+              版本升级
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 
