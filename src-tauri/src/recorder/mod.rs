@@ -24,6 +24,8 @@ pub struct ActiveRecording {
     pub folder: String,
     pub file: String,
     pub size: u64,
+    #[serde(skip)]
+    pub stream_url: String,
 }
 
 #[derive(Clone)]
@@ -339,6 +341,7 @@ async fn room_task(
             folder: dir.to_string_lossy().to_string(),
             file: output_path.to_string_lossy().to_string(),
             size: 0,
+            stream_url: stream_url.clone(),
         };
         handle.set_recording(active.clone()).await;
 
@@ -352,6 +355,7 @@ async fn room_task(
                 }
                 _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
                     active.size = current_output_size(&dir, &filename_base, &ext);
+                    active.file = active_file(&dir, &filename_base, &ext).to_string_lossy().into_owned();
                     handle.set_recording(active.clone()).await;
                     if process.try_wait().is_some() {
                         break;
@@ -430,7 +434,9 @@ fn current_output_size(dir: &PathBuf, base: &str, ext: &str) -> u64 {
             let matches = (name.starts_with(&prefix) && name.ends_with(ext))
                 || name == exact;
             if matches {
-                if let Ok(meta) = entry.metadata() {
+                // Windows directory enumeration can cache size until the writer
+                // closes its handle. Query the open file instead.
+                if let Ok(meta) = std::fs::File::open(entry.path()).and_then(|file| file.metadata()) {
                     total += meta.len();
                 }
             }
@@ -450,7 +456,7 @@ fn active_file(dir: &PathBuf, base: &str, ext: &str) -> PathBuf {
             let matches = (name.starts_with(&prefix) && name.ends_with(ext))
                 || name == exact;
             if matches {
-                if let Ok(meta) = entry.metadata() {
+                if let Ok(meta) = std::fs::File::open(entry.path()).and_then(|file| file.metadata()) {
                     if let Ok(modified) = meta.modified() {
                         if newest.as_ref().map(|(t, _)| modified > *t).unwrap_or(true) {
                             newest = Some((modified, entry.path()));
@@ -468,4 +474,33 @@ fn app_data_dir(app: &tauri::AppHandle) -> PathBuf {
     app.path()
         .app_data_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn reads_growth_while_writer_is_open_and_sums_segments() {
+        let dir = std::env::temp_dir().join(format!("banana-size-test-{:032x}", rand::random::<u128>()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut first = std::fs::File::create(dir.join("record_000.ts")).unwrap();
+        first.write_all(&[1; 100]).unwrap();
+        first.flush().unwrap();
+        assert_eq!(current_output_size(&dir, "record", "ts"), 100);
+        first.write_all(&[2; 75]).unwrap();
+        first.flush().unwrap();
+        assert_eq!(current_output_size(&dir, "record", "ts"), 175);
+        let mut second = std::fs::File::create(dir.join("record_001.ts")).unwrap();
+        second.write_all(&[3; 50]).unwrap();
+        second.flush().unwrap();
+        std::fs::write(dir.join("other_000.ts"), [0; 30]).unwrap();
+        assert_eq!(current_output_size(&dir, "record", "ts"), 225);
+        std::fs::write(dir.join("single.mp4"), [0; 20]).unwrap();
+        assert_eq!(current_output_size(&dir, "single", "mp4"), 20);
+        drop(first);
+        drop(second);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

@@ -1,4 +1,5 @@
 mod commands;
+mod preview;
 mod config;
 mod events;
 mod naming;
@@ -63,6 +64,7 @@ fn update_tray_badge(app: &tauri::AppHandle, count: usize) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(preview::Previews::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -155,8 +157,14 @@ pub fn run() {
                 &[&open_dashboard, &open_videos, &open_rooms, &quit],
             )?;
 
+            // A transparent, full-size banana stays legible at Windows tray sizes.
+            // Keep the framed application icon for the window and other platforms.
+            #[cfg(target_os = "windows")]
+            let tray_icon = tauri::include_image!("../public/banana.png");
+            #[cfg(not(target_os = "windows"))]
+            let tray_icon = app.default_window_icon().expect("missing bundle icon").clone();
             let builder = TrayIconBuilder::with_id("main-tray")
-                .icon(app.default_window_icon().expect("missing bundle icon").clone())
+                .icon(tray_icon)
                 .tooltip("香蕉录制 BananaRecorder")
                 .menu(&tray_menu);
             // macOS convention: clicking the menu-bar item opens the menu.
@@ -239,6 +247,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            preview::start_preview,
+            preview::touch_preview,
+            preview::stop_preview,
             commands::get_status,
             commands::control_recorder,
             commands::list_rooms,

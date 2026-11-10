@@ -103,7 +103,7 @@ async fn resolve_profile(
         .get(url)
         .header("User-Agent", MOBILE_UA)
         .header("Accept-Language", "zh-CN,zh;q=0.8")
-        .header("Cookie", REDIRECT_COOKIE)
+        .header("Cookie", cookie.unwrap_or(REDIRECT_COOKIE))
         .send()
         .await
         .map_err(|e| format!("抖音主页请求失败: {e}"))?;
@@ -152,7 +152,7 @@ async fn resolve_profile(
     let share_html = share_client
         .get(format!("https://www.iesdouyin.com/share/user/{sec_user_id}"))
         .header("User-Agent", MOBILE_UA)
-        .header("Cookie", IES_TTWID)
+        .header("Cookie", cookie.unwrap_or(IES_TTWID))
         .send()
         .await
         .map_err(|e| format!("抖音分享页请求失败: {e}"))?
@@ -165,7 +165,17 @@ async fn resolve_profile(
 
     // python fallback (spider.py:192-193): douyin number → live page html parse
     let room_url = format!("https://live.douyin.com/{room_key}");
-    resolve_via_html(&room_url, quality, cookie, proxy).await
+    // Prefer the signed endpoint just as for a directly entered live-room URL.
+    // Only accept an identified room: an empty API response is not evidence
+    // that a profile-derived key belongs to an offline streamer.
+    if let Ok(state) = resolve_web_rid(&room_key, quality, cookie, proxy.clone()).await {
+        if state.is_live || !state.anchor_name.trim().is_empty() {
+            return Ok(state);
+        }
+    }
+    resolve_via_html(&room_url, quality, cookie, proxy)
+        .await
+        .map_err(|err| format!("无法从抖音主页获取直播信息。请打开主播直播间，复制 live.douyin.com 的完整地址；也可在设置中更新抖音 Cookie 后重试。详情：{err}"))
 }
 
 /// Live-room route key from a profile share page: the custom 抖音号 (`unique_id`)

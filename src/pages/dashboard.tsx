@@ -5,6 +5,8 @@ import { api } from '@/lib/api'
 import { useStatus } from '@/lib/status'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { LivePreview } from '@/components/live-preview'
 import { formatBytes, formatDuration } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 
@@ -96,6 +98,7 @@ function LogPanel() {
 }
 
 export default function Dashboard() {
+  const [watching, setWatching] = useState<{ roomId: string; anchor: string } | null>(null)
   const { status } = useStatus()
   const running = status?.recorder.running ?? false
 
@@ -119,6 +122,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {watching && <LivePreview roomId={watching.roomId} anchor={watching.anchor} onClose={() => setWatching(null)} />}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           title="监测直播间"
@@ -173,7 +177,10 @@ export default function Dashboard() {
                         {f.file.split(/[\\/]/).pop()} · {f.folder || '根目录'}
                       </div>
                     </div>
-                    <Badge variant="secondary">{formatBytes(f.size)}</Badge>
+                    <Badge variant="secondary" className="shrink-0 whitespace-nowrap tabular-nums" title="本次录制所有分段的累计大小">{formatBytes(f.size)}</Badge>
+                    <Button variant="outline" size="sm" className="shrink-0" onClick={() => setWatching({ roomId: f.room_id, anchor: f.anchor })}>
+                      <MonitorPlay />观看
+                    </Button>
                   </div>
                 ))}
               </div>

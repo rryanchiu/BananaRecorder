@@ -171,7 +171,7 @@ function RoomFormDialog({ open, onOpenChange, room, onSaved }: RoomFormDialogPro
               </p>
             ) : resolveError ? (
               <p className="text-xs text-amber-600 dark:text-amber-400">
-                {resolveError}（可手动填写主播名称）
+                {resolveError}（手动填写名称仅用于标记，不能修复直播源解析失败）
               </p>
             ) : null}
           </div>
