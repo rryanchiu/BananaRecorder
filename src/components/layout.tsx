@@ -105,7 +105,7 @@ function RecorderControls() {
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div data-tauri-drag-region className="flex items-center gap-2">
       <Badge variant={running ? 'success' : 'secondary'} className="gap-1.5">
         <span className={cn('inline-block h-1.5 w-1.5 rounded-full', running ? 'bg-emerald-500 animate-pulse' : 'bg-muted-foreground')} />
         {running ? '录制引擎运行中' : '录制引擎已停止'}
@@ -118,13 +118,13 @@ function RecorderControls() {
           </Button>
           <Button variant="destructive" size="sm" onClick={() => void control('stop')}>
             <CircleStop />
-            停止录制
+            停止监控
           </Button>
         </>
       ) : (
         <Button size="sm" onClick={() => void control('start')}>
           <CirclePlay />
-          开始录制
+          开始监控
         </Button>
       )}
     </div>
@@ -136,7 +136,7 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
   const title = PAGE_TITLES[location.pathname] ?? '控制台'
 
   return (
-    <div className="flex min-h-screen pt-10">
+    <div className="flex h-full overflow-hidden pt-10">
       {/* window top strip: own blank row — drag region + window controls */}
       <div
         data-tauri-drag-region
@@ -146,14 +146,14 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* Sidebar */}
-      <aside data-tauri-drag-region className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r bg-card md:flex">
+      <aside data-tauri-drag-region className="fixed inset-y-0 left-0 z-30 hidden w-56 select-none flex-col border-r bg-card md:flex">
         <div data-tauri-drag-region className="flex items-center gap-2.5 px-5 py-4">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/40">
-            <img src="banana.png" alt="banana" className="h-6 w-6 object-contain" draggable={false} />
+          <div data-tauri-drag-region className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/40">
+            <img data-tauri-drag-region src="banana.png" alt="banana" className="h-6 w-6 object-contain" draggable={false} />
           </div>
-          <div>
-            <div className="text-sm font-semibold leading-tight">香蕉录制</div>
-            <div className="text-xs text-muted-foreground">BananaRecorder</div>
+          <div data-tauri-drag-region>
+            <div data-tauri-drag-region className="text-sm font-semibold leading-tight">香蕉录制</div>
+            <div data-tauri-drag-region className="text-xs text-muted-foreground">BananaRecorder</div>
           </div>
         </div>
         <nav data-tauri-drag-region className="flex-1 space-y-1 px-3">
@@ -182,10 +182,10 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Main area */}
-      <div className="flex flex-1 flex-col md:pl-56">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col md:pl-56">
         <header
           data-tauri-drag-region
-          className="sticky top-10 z-20 flex flex-col gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur md:flex-row md:items-center md:justify-between md:px-6"
+          className="relative z-20 flex shrink-0 flex-col gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur md:flex-row md:items-center md:justify-between md:px-6"
         >
           <h1 data-tauri-drag-region className="text-lg font-semibold select-none">
             {title}
@@ -193,7 +193,7 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
           <RecorderControls />
         </header>
         {/* mobile nav */}
-        <nav className="flex items-center gap-1 overflow-x-auto border-b px-2 py-1.5 md:hidden">
+        <nav className="flex shrink-0 items-center gap-1 overflow-x-auto border-b px-2 py-1.5 md:hidden">
           {NAV_ITEMS.map((item) => (
             <NavLink
               key={item.to}
@@ -211,7 +211,7 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
             </NavLink>
           ))}
         </nav>
-        <main className="flex-1 overflow-x-hidden p-4 md:p-6">{children}</main>
+        <main className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-4 md:p-6">{children}</main>
       </div>
     </div>
   )

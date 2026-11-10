@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Check, CircleStop, Copy, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Check, Copy, Pencil, Plus, Square, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, detectPlatform, SUPPORTED_PLATFORMS, type Room } from '@/lib/api'
 import { useStatus } from '@/lib/status'
@@ -291,7 +291,7 @@ export default function Rooms() {
               <TableHead>主播 / 链接</TableHead>
               <TableHead className="w-28">画质</TableHead>
               <TableHead className="w-24">状态</TableHead>
-              <TableHead className="w-28 pr-4 text-right">操作</TableHead>
+              <TableHead className="w-32 pr-4 text-right">操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -345,20 +345,21 @@ export default function Rooms() {
                       </Select>
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-1.5">
-                        <Badge variant={state.variant}>{state.label}</Badge>
-                        {isRecording(room) && (
-                          <button
-                            className="flex h-6 w-6 items-center justify-center rounded-md text-destructive transition-colors hover:bg-destructive/10"
-                            title="停止录制（同时停用监控，可重新打开开关恢复）"
-                            onClick={() => void stopRecording(room)}
-                          >
-                            <CircleStop className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </div>
+                      <Badge variant={state.variant} className="shrink-0 whitespace-nowrap">{state.label}</Badge>
                     </TableCell>
-                    <TableCell className="pr-4 text-right">
+                    <TableCell className="whitespace-nowrap pr-4 text-right">
+                      {isRecording(room) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-destructive"
+                          title="停止录制（同时停用监控，可重新打开开关恢复）"
+                          aria-label="停止录制并停用监控"
+                          onClick={() => void stopRecording(room)}
+                        >
+                          <Square className="h-4 w-4" fill="currentColor" strokeWidth={0} />
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"
