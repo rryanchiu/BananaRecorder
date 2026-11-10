@@ -507,25 +507,41 @@ pub async fn check_update(
         .unwrap_or(tag)
         .to_string();
     let available = !latest_version.is_empty() && version_gt(&latest_version, &current_version);
+    // only offer an installer for this OS; the release also contains the other
+    // platform's artifacts
+    let installer_exts: &[&str] = if cfg!(target_os = "windows") {
+        &[".exe", ".msi"]
+    } else if cfg!(target_os = "macos") {
+        &[".dmg", ".app.tar.gz"]
+    } else {
+        &[".appimage", ".deb", ".rpm"]
+    };
     let download_url = json
         .get("assets")
         .and_then(serde_json::Value::as_array)
         .and_then(|assets| {
-            assets.iter().find_map(|asset| {
+            let matched = |asset: &serde_json::Value| -> Option<String> {
                 let name = asset.get("name")?.as_str()?.to_ascii_lowercase();
-                if name.ends_with(".exe")
-                    || name.ends_with(".msi")
-                    || name.ends_with(".dmg")
-                    || name.ends_with(".app.tar.gz")
-                {
-                    asset
-                        .get("browser_download_url")?
-                        .as_str()
-                        .map(str::to_string)
-                } else {
-                    None
+                if !installer_exts.iter().any(|ext| name.ends_with(ext)) {
+                    return None;
                 }
-            })
+                asset
+                    .get("browser_download_url")?
+                    .as_str()
+                    .map(str::to_string)
+            };
+            // prefer the full build if a lite installer is also attached
+            assets
+                .iter()
+                .filter(|asset| {
+                    asset
+                        .get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|name| !name.to_ascii_lowercase().contains("lite"))
+                        .unwrap_or(false)
+                })
+                .find_map(|asset| matched(asset))
+                .or_else(|| assets.iter().find_map(|asset| matched(asset)))
         });
 
     Ok(UpdateInfo {

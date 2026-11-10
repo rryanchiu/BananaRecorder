@@ -169,6 +169,35 @@ FFmpeg tab actions:
 
 The main EXE is not a complete, self-contained single-file distribution. Manual distribution must also account for FFmpeg, WebView2, and third-party license files. The first build may download Rust dependencies and installer tooling.
 
+## Publishing a release
+
+1. **Bump the version** in `src-tauri/tauri.conf.json` (and `package.json` for consistency).
+2. **Tag and push**:
+
+   ```bash
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+3. **Wait for Actions**: `.github/workflows/release.yml` downloads the bundled LGPL FFmpeg,
+   builds the Windows NSIS installer and a macOS dmg (unsigned), and creates a
+   **draft release** with the installers and generated release notes.
+4. **Publish**: review the draft on GitHub Releases and click Publish.
+
+Notes:
+
+- The app queries GitHub `releases/latest`, which returns only **published** releases
+  (drafts and prereleases are ignored), so users are not prompted before you publish.
+- The tag must match the `version` in `tauri.conf.json`, otherwise the workflow fails.
+- The workflow ships the full build only; build the lite variant locally with
+  `npm run tauri:build:lite` and upload it manually if needed.
+- The macOS build is unsigned; users must right-click → Open the first time. Add signing
+  and notarization before wider distribution.
+- The current upgrade button opens the installer download; true one-click updates need
+  `tauri-plugin-updater` with signed artifacts and a generated `latest.json`.
+- No extra Secrets are required for this flow; it uses the repository's `GITHUB_TOKEN`
+  with `contents: write`.
+
 ## Testing
 
 Default tests cover FFmpeg command construction, filename sanitization, signature algorithms, and Python/Rust signature test vectors. Live network tests are skipped by default.

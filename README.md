@@ -168,6 +168,32 @@ FFmpeg 页签的三个操作：
 
 主程序 EXE 不等于完整的独立单文件发行包。若手动分发主程序，需要同时处理 FFmpeg、WebView2 运行环境及第三方许可文件。首次构建可能需要联网下载 Rust 依赖和安装包工具。
 
+## 发布 Release
+
+1. **同步版本号**：把 `src-tauri/tauri.conf.json` 的 `version` 改成新版本（建议同时更新 `package.json`）。
+2. **打标签并推送**：
+
+   ```bash
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+3. **等待 Actions**：`.github/workflows/release.yml` 会自动：
+   - 在 Windows 上下载 LGPL 版 FFmpeg 并构建 NSIS 安装包
+   - 在 macOS 上构建 dmg（未签名）
+   - 创建一个 **draft Release**，附上安装包和自动生成的更新说明
+
+4. **发布**：到 GitHub Releases 检查安装包，确认后点击 Publish。
+
+说明：
+
+- 应用启动时请求 GitHub 的 `releases/latest`，它**只返回已发布**（非 draft、非 prerelease）的版本，所以草稿阶段不会提示更新。
+- 标签版本必须与 `tauri.conf.json` 的 `version` 一致，否则工作流直接失败。
+- 工作流只产出完整版（内置 FFmpeg）；精简版可本地 `npm run tauri:build:lite` 构建后手动上传。
+- macOS 安装包未签名，首次打开需要右键 → 打开；正式分发建议补充签名和公证。
+- 当前“版本升级”按钮打开安装包下载页；要做一键安装，需要接入签名后的 `tauri-plugin-updater`（生成 `latest.json` 并校验签名）。
+- 手动下载流程不需要额外 Secrets；工作流使用仓库自带的 `GITHUB_TOKEN`（已声明 `contents: write`）。
+
 ## 测试
 
 默认测试包括 FFmpeg 命令构建、文件名清理、签名算法及 Python/Rust 签名向量对拍。联网测试默认跳过。
