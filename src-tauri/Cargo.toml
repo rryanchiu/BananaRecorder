@@ -1,6 +1,6 @@
 [package]
 name = "liverecorder"
-version = "0.2.0"
+version = "0.3.0"
 description = "LiveRecorder - multi-platform live stream recorder"
 authors = ["Ryan"]
 edition = "2024"
