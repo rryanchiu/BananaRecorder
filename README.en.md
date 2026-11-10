@@ -100,9 +100,9 @@ Cookies are stored in the local settings JSON, not in an encrypted credential st
 - **Rust stable** with the Windows MSVC toolchain.
 - **Visual Studio Build Tools**, including Desktop development with C++ and the Windows SDK.
 - **Microsoft Edge WebView2 Runtime**.
-- **FFmpeg**: obtain a Windows build and place `ffmpeg.exe` at `src-tauri/binaries/ffmpeg.exe`.
+- **FFmpeg (full build only)**: place a Windows build at `src-tauri/binaries/ffmpeg.exe`, or `src-tauri/binaries/ffmpeg` on macOS/Linux.
 
-> The FFmpeg binary is not tracked in Git. Even when FFmpeg is available on PATH, the resource file above is required for installer builds. Choose a build from the [FFmpeg download page](https://ffmpeg.org/download.html) and review its license.
+> The FFmpeg binary is not tracked in Git. The full build bundles it; the lite build does not, and does not require the resource to compile. Users can install FFmpeg from **Settings → FFmpeg** or point the app at an existing binary. Review the license of the build you ship.
 
 ### Install dependencies and run
 
@@ -123,7 +123,9 @@ The running app does not require Python or the original DouyinLiveRecorder check
 | `npm run build` | TypeScript checking and frontend production build |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | Check the Rust backend |
 | `cargo test --manifest-path src-tauri/Cargo.toml` | Run default tests |
-| `npm run tauri build` | Build the desktop application and installers |
+| `npm run tauri build` | Build the full app and installers (FFmpeg bundled) |
+| `npm run tauri:build:lite` | Build the lite app (no bundled FFmpeg) |
+| `npm run tauri:dev:lite` | Run the dev environment with the lite config |
 
 ## Building installers
 
@@ -148,6 +150,22 @@ To build only the NSIS installer:
 ```powershell
 npm run tauri build -- --bundles nsis
 ```
+
+### Full and lite builds
+
+- **Full**: `npm run tauri build` bundles the FFmpeg binary from `src-tauri/binaries/`.
+- **Lite**: `npm run tauri:build:lite` ships without FFmpeg, producing a smaller installer
+  under the product name `BananaRecorder Lite` so it does not overwrite the full build.
+  After first launch, open **Settings → FFmpeg** and click **Install FFmpeg**, or point it
+  at an existing binary.
+
+FFmpeg tab actions:
+
+| Action | Behavior |
+| --- | --- |
+| Use bundled version | Clears the custom path; auto order is bundled → in-app install → PATH |
+| Use local path | File picker for an existing `ffmpeg` / `ffmpeg.exe` |
+| Install FFmpeg | Downloads into the app data directory (no admin rights) and enables it |
 
 The main EXE is not a complete, self-contained single-file distribution. Manual distribution must also account for FFmpeg, WebView2, and third-party license files. The first build may download Rust dependencies and installer tooling.
 

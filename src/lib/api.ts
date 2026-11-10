@@ -15,6 +15,13 @@ export interface RoomListResponse {
   recorder_running: boolean
 }
 
+export interface RoomInfo {
+  platform: string
+  anchor_name: string
+  is_live: boolean
+  title: string
+}
+
 export interface RecordingFile {
   room_id: string
   anchor: string
@@ -51,6 +58,24 @@ export interface AppSettings {
   bilibili_cookie: string
   proxy_addr: string
   proxy_enabled: boolean
+  /** Empty = auto (builtin → installed → PATH) */
+  ffmpeg_path: string
+}
+
+export type FfmpegSource = "builtin" | "custom" | "installed" | "path" | "none"
+
+export interface FfmpegStatus {
+  path: string | null
+  version: string | null
+  source: FfmpegSource
+  builtin_available: boolean
+  install_supported: boolean
+}
+
+export interface FfmpegInstallProgress {
+  stage: "downloading" | "extracting" | "done"
+  downloaded: number
+  total: number | null
 }
 
 export interface VideoDir {
@@ -110,6 +135,7 @@ export const api = {
 
   // rooms
   listRooms: () => request<RoomListResponse>("list_rooms"),
+  resolveRoomInfo: (url: string) => request<RoomInfo>("resolve_room_info", { url }),
   createRoom: (room: { url: string; name?: string; quality?: string }) =>
     request<{ ok: boolean }>("create_room", { room }),
   updateRoom: (id: string, patch: Partial<Pick<Room, "url" | "name" | "quality" | "enabled">>) =>
@@ -131,6 +157,12 @@ export const api = {
     }>("check_save_path_change", { newPath }),
   migrateSavePath: (newPath: string) =>
     request<{ moved: number; skipped: number; failed: number }>("migrate_save_path", { newPath }),
+
+  // ffmpeg runtime
+  getFfmpegStatus: () => request<FfmpegStatus>("get_ffmpeg_status"),
+  setFfmpegPath: (path: string | null) =>
+    request<FfmpegStatus>("set_ffmpeg_path", { path }),
+  installFfmpeg: () => request<FfmpegStatus>("install_ffmpeg"),
 
   // videos
   listVideos: (path = "") => request<VideoListResponse>("list_videos", { path }),

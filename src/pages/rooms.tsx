@@ -1,7 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Check, Copy, Pencil, Plus, Square, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Check, Copy, Loader2, Pencil, Plus, Square, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { api, detectPlatform, SUPPORTED_PLATFORMS, type Room } from '@/lib/api'
+import {
+  api,
+  detectPlatform,
+  SUPPORTED_PLATFORMS,
+  type Room,
+  type RoomInfo,
+} from '@/lib/api'
 import { useStatus } from '@/lib/status'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -40,14 +46,66 @@ function RoomFormDialog({ open, onOpenChange, room, onSaved }: RoomFormDialogPro
   const [name, setName] = useState('')
   const [quality, setQuality] = useState('原画')
   const [saving, setSaving] = useState(false)
+  const [resolving, setResolving] = useState(false)
+  const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null)
+  const [resolveError, setResolveError] = useState('')
+  // last name we filled in automatically — never overwrite a user's own edit
+  const autoNameRef = useRef('')
 
   useEffect(() => {
     if (open) {
       setUrl(room?.url ?? '')
       setName(room?.name ?? '')
       setQuality(room?.quality ?? '原画')
+      setResolving(false)
+      setRoomInfo(null)
+      setResolveError('')
+      autoNameRef.current = ''
     }
   }, [open, room])
+
+  // Debounced anchor-name lookup as soon as a supported room link is entered.
+  useEffect(() => {
+    if (!open) return
+    const candidate = url.trim()
+    setResolveError('')
+    if (!candidate || detectPlatform(candidate) === '未知平台') {
+      setRoomInfo(null)
+      setResolving(false)
+      return
+    }
+
+    let cancelled = false
+    setResolving(true)
+    const timer = window.setTimeout(() => {
+      void api
+        .resolveRoomInfo(candidate)
+        .then((info) => {
+          if (cancelled) return
+          setRoomInfo(info)
+          if (info.anchor_name) {
+            const previousAuto = autoNameRef.current
+            setName((prev) =>
+              prev.trim() === '' || prev === previousAuto ? info.anchor_name : prev
+            )
+            autoNameRef.current = info.anchor_name
+          }
+        })
+        .catch((err) => {
+          if (cancelled) return
+          setRoomInfo(null)
+          setResolveError(err instanceof Error ? err.message : '未能自动获取主播名称')
+        })
+        .finally(() => {
+          if (!cancelled) setResolving(false)
+        })
+    }, 700)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [url, open])
 
   const submit = async () => {
     if (!url.trim()) {
@@ -97,10 +155,25 @@ function RoomFormDialog({ open, onOpenChange, room, onSaved }: RoomFormDialogPro
             <Label htmlFor="room-name">主播名称（可选，便于识别和归档）</Label>
             <Input
               id="room-name"
-              placeholder="留空则自动使用主播昵称"
+              placeholder={resolving ? '正在获取主播昵称…' : '留空则自动使用主播昵称'}
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
+            {resolving ? (
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                正在识别直播间…
+              </p>
+            ) : roomInfo?.anchor_name ? (
+              <p className="text-xs text-muted-foreground">
+                已识别：{roomInfo.anchor_name} · {roomInfo.platform} ·{' '}
+                {roomInfo.is_live ? '直播中' : '未开播'}
+              </p>
+            ) : resolveError ? (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                {resolveError}（可手动填写主播名称）
+              </p>
+            ) : null}
           </div>
           <div className="space-y-1.5">
             <Label>录制画质</Label>

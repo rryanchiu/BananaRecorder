@@ -31,6 +31,24 @@ chrono = "0.4"
 md-5 = "0.10"
 base64 = "0.22"
 url = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# macOS: native window corners with continuous ("squircle") curvature.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  "NSColor",
+  "NSGraphics",
+  "NSResponder",
+  "NSView",
+  "NSWindow",
+  "objc2-quartz-core",
+] }
+objc2-quartz-core = { version = "0.3", default-features = false, features = ["std", "CALayer"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -38,7 +38,7 @@ async fn record_bilibili_for_8_seconds() {
         overseas: false,
     };
     let args = build_args(&spec);
-    let ffmpeg = find_ffmpeg(None).expect("ffmpeg not found");
+    let ffmpeg = find_ffmpeg(None, None).expect("ffmpeg not found");
 
     let mut process = RecordingProcess::spawn(&ffmpeg, &args).expect("spawn failed");
     println!("recording 8s with ffmpeg pid={:?}", process.pid());

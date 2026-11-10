@@ -4,59 +4,277 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tauri::Emitter;
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
 
-/// Resolve the ffmpeg executable: PATH → dev resource → portable layout →
-/// installed resource dir.
-pub fn find_ffmpeg(app: Option<&tauri::AppHandle>) -> Result<PathBuf, String> {
-    // 1. PATH
-    if which::exists_checked("ffmpeg") {
-        return Ok(PathBuf::from("ffmpeg"));
-    }
-    // 2. dev: src-tauri/binaries/ffmpeg.exe (resolved at compile time)
-    let dev_candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries/ffmpeg.exe");
-    if dev_candidate.exists() {
-        return Ok(dev_candidate);
-    }
-    // 3. next to the app executable (portable layout)
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join("ffmpeg.exe");
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        }
-    }
-    // 4. bundled resource directory
-    if let Some(app) = app {
-        use tauri::Manager;
-        if let Ok(resource_dir) = app.path().resource_dir() {
-            let candidate = resource_dir.join("binaries/ffmpeg.exe");
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        }
-    }
-    Err("未找到 ffmpeg。请将 ffmpeg.exe 放在应用目录下，或加入系统 PATH。".into())
+/// Bundled ffmpeg binary name: Windows ships `ffmpeg.exe`, Unices use `ffmpeg`.
+pub const FFMPEG_BIN: &str = if cfg!(windows) {
+    "ffmpeg.exe"
+} else {
+    "ffmpeg"
+};
+
+/// Where a resolved ffmpeg binary came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfmpegSource {
+    Builtin,
+    Custom,
+    Installed,
+    Path,
 }
 
-/// Minimal PATH probe (std has no `which`).
+impl FfmpegSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Builtin => "builtin",
+            Self::Custom => "custom",
+            Self::Installed => "installed",
+            Self::Path => "path",
+        }
+    }
+}
+
+/// Directory for an in-app installed ffmpeg: app data, no admin rights needed.
+pub fn install_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .map(|dir| dir.join("ffmpeg"))
+        .map_err(|e| e.to_string())
+}
+
+/// The ffmpeg shipped with the app (dev `binaries/` or the bundled resource).
+pub fn builtin_ffmpeg(app: Option<&tauri::AppHandle>) -> Option<PathBuf> {
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("binaries")
+        .join(FFMPEG_BIN);
+    if dev.is_file() {
+        return Some(dev);
+    }
+    let app = app?;
+    use tauri::Manager;
+    let candidate = app
+        .path()
+        .resource_dir()
+        .ok()?
+        .join("binaries")
+        .join(FFMPEG_BIN);
+    candidate.is_file().then_some(candidate)
+}
+
+/// An ffmpeg previously installed by the in-app installer.
+pub fn managed_ffmpeg(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let candidate = install_dir(app).ok()?.join(FFMPEG_BIN);
+    candidate.is_file().then_some(candidate)
+}
+
+/// Resolve ffmpeg: explicit path → bundled → in-app install → system PATH.
+pub fn resolve_ffmpeg(
+    app: Option<&tauri::AppHandle>,
+    custom: Option<&str>,
+) -> Result<(PathBuf, FfmpegSource), String> {
+    if let Some(raw) = custom.map(str::trim).filter(|s| !s.is_empty()) {
+        let candidate = PathBuf::from(raw);
+        if candidate.is_file() {
+            return Ok((candidate, FfmpegSource::Custom));
+        }
+    }
+    if let Some(path) = builtin_ffmpeg(app) {
+        return Ok((path, FfmpegSource::Builtin));
+    }
+    if let Some(app) = app {
+        if let Some(path) = managed_ffmpeg(app) {
+            return Ok((path, FfmpegSource::Installed));
+        }
+    }
+    if which::exists_checked(FFMPEG_BIN) {
+        return Ok((PathBuf::from(FFMPEG_BIN), FfmpegSource::Path));
+    }
+    Err(format!(
+        "未找到 ffmpeg。请在设置中安装 FFmpeg，或指定 {FFMPEG_BIN} 的路径。"
+    ))
+}
+
+/// Convenience wrapper when only the executable path is needed.
+pub fn find_ffmpeg(
+    app: Option<&tauri::AppHandle>,
+    custom: Option<&str>,
+) -> Result<PathBuf, String> {
+    resolve_ffmpeg(app, custom).map(|(path, _)| path)
+}
+
+/// First line of `ffmpeg -version`, shown in the settings page.
+pub async fn ffmpeg_version(path: &Path) -> Option<String> {
+    let mut cmd = Command::new(path);
+    cmd.arg("-version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    hide_console(&mut cmd);
+    let output = cmd.output().await.ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .next()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+}
+
+pub fn install_supported() -> bool {
+    cfg!(any(target_os = "windows", target_os = "macos"))
+}
+
+#[cfg(target_os = "windows")]
+fn install_url() -> Result<&'static str, String> {
+    // BtbN publishes static LGPL builds (no GPL-only codecs).
+    Ok(if cfg!(target_arch = "aarch64") {
+        "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-winarm64-lgpl.zip"
+    } else {
+        "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip"
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn install_url() -> Result<&'static str, String> {
+    Ok(if cfg!(target_arch = "aarch64") {
+        "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip"
+    } else {
+        "https://ffmpeg.martin-riedl.de/redirect/latest/macos/amd64/release/ffmpeg.zip"
+    })
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn install_url() -> Result<&'static str, String> {
+    Err("当前平台不支持自动安装 FFmpeg，请使用系统包管理器安装或在设置中指定路径".into())
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InstallProgress {
+    pub stage: &'static str,
+    pub downloaded: u64,
+    pub total: Option<u64>,
+}
+
+/// Download a static ffmpeg build and install it under the app data directory.
+pub async fn install_ffmpeg(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let url = install_url()?;
+    let dir = install_dir(app)?;
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let archive = dir.join("ffmpeg-download.zip");
+    let target = dir.join(FFMPEG_BIN);
+
+    let client = reqwest::Client::builder()
+        .user_agent("BananaRecorder")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("下载 FFmpeg 失败: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("下载 FFmpeg 失败: {e}"))?;
+    let total = resp.content_length();
+
+    let mut file = tokio::fs::File::create(&archive)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut downloaded = 0u64;
+    let mut last_emit = 0u64;
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| format!("下载 FFmpeg 失败: {e}"))?
+    {
+        file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as u64;
+        if downloaded - last_emit >= 512 * 1024 || Some(downloaded) == total {
+            last_emit = downloaded;
+            let _ = app.emit(
+                "ffmpeg://install-progress",
+                InstallProgress {
+                    stage: "downloading",
+                    downloaded,
+                    total,
+                },
+            );
+        }
+    }
+    file.flush().await.ok();
+    drop(file);
+
+    let _ = app.emit(
+        "ffmpeg://install-progress",
+        InstallProgress {
+            stage: "extracting",
+            downloaded,
+            total,
+        },
+    );
+
+    let archive_path = archive.clone();
+    let target_path = target.clone();
+    let extracted =
+        tauri::async_runtime::spawn_blocking(move || extract_ffmpeg(&archive_path, &target_path))
+            .await
+            .map_err(|e| format!("解压 FFmpeg 失败: {e}"))?;
+    let _ = tokio::fs::remove_file(&archive).await;
+    extracted?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755));
+    }
+
+    let _ = app.emit(
+        "ffmpeg://install-progress",
+        InstallProgress {
+            stage: "done",
+            downloaded,
+            total,
+        },
+    );
+    Ok(target)
+}
+
+/// Extract the first entry named exactly `ffmpeg` / `ffmpeg.exe` from a zip.
+/// Entry paths are ignored, so a malicious archive cannot escape `target`.
+fn extract_ffmpeg(archive: &Path, target: &Path) -> Result<(), String> {
+    let file = std::fs::File::open(archive).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("安装包格式错误: {e}"))?;
+    for index in 0..zip.len() {
+        let mut entry = zip.by_index(index).map_err(|e| e.to_string())?;
+        if !entry.is_file() {
+            continue;
+        }
+        let name = entry.name().rsplit('/').next().unwrap_or_default();
+        if name != FFMPEG_BIN {
+            continue;
+        }
+        let temp = target.with_file_name(format!(".{FFMPEG_BIN}.part"));
+        {
+            let mut out = std::fs::File::create(&temp).map_err(|e| e.to_string())?;
+            std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+        }
+        std::fs::rename(&temp, target).map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    Err(format!("安装包中未找到 {FFMPEG_BIN}"))
+}
+
+/// Minimal PATH probe (std has no `which`). Uses the platform path separator
+/// so it works on Unix too (`;` only splits PATH on Windows).
 mod which {
     pub fn exists_checked(name: &str) -> bool {
-        let path = std::env::var("PATH").unwrap_or_default();
-        for dir in path.split(';') {
-            if dir.is_empty() {
-                continue;
-            }
-            for ext in ["", ".exe"] {
-                let candidate = std::path::Path::new(dir).join(format!("{name}{ext}"));
-                if candidate.is_file() {
-                    return true;
-                }
-            }
-        }
-        false
+        let Some(path) = std::env::var_os("PATH") else {
+            return false;
+        };
+        std::env::split_paths(&path).any(|dir| dir.join(name).is_file())
     }
 }
 
@@ -351,5 +569,47 @@ mod tests {
         let args = build_args(&spec);
         assert_eq!(&args[1], "-http_proxy");
         assert_eq!(&args[2], "http://127.0.0.1:7890");
+    }
+
+    #[test]
+    fn extract_ffmpeg_ignores_entry_paths() {
+        let dir = std::env::temp_dir().join(format!(
+            "banana-ffmpeg-extract-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let archive = dir.join("build.zip");
+        {
+            let file = std::fs::File::create(&archive).unwrap();
+            let mut writer = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            writer
+                .start_file(format!("ffmpeg-build/bin/{FFMPEG_BIN}"), options)
+                .unwrap();
+            std::io::Write::write_all(&mut writer, b"fake-ffmpeg").unwrap();
+            writer.finish().unwrap();
+        }
+
+        let target = dir.join(FFMPEG_BIN);
+        extract_ffmpeg(&archive, &target).expect("extract");
+        assert_eq!(std::fs::read(&target).unwrap(), b"fake-ffmpeg");
+
+        // a zip without an ffmpeg entry is rejected
+        let bad = dir.join("bad.zip");
+        {
+            let file = std::fs::File::create(&bad).unwrap();
+            let mut writer = zip::ZipWriter::new(file);
+            writer
+                .start_file("readme.txt", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            std::io::Write::write_all(&mut writer, b"nope").unwrap();
+            writer.finish().unwrap();
+        }
+        assert!(extract_ffmpeg(&bad, &dir.join("out")).is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

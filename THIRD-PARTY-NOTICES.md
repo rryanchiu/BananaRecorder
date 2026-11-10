@@ -51,6 +51,11 @@ SOFTWARE.
 - 项目地址：<https://ffmpeg.org>
 - 本项目打包的 Windows 二进制来自第三方构建（如 gyan.dev / BtbN FFmpeg Builds），
   采用 **GPL** 或 LGPL 授权。
+- 应用内“安装 FFmpeg”下载的二进制：
+  - Windows：[BtbN FFmpeg Builds](https://github.com/BtbN/FFmpeg-Builds/releases) 的 LGPL 静态构建
+  - macOS：[ffmpeg.martin-riedl.de](https://ffmpeg.martin-riedl.de/) 的静态构建
+
+  这些二进制由第三方构建并遵循其各自许可；本应用仅下载并原样存放，不做修改。
 
 **分发说明**：若您再分发包含 FFmpeg 二进制的安装包，请依据其许可（GPL v3）
 在您的发布渠道中一并说明并提供对应源代码获取途径（例如附带上游构建页链接：

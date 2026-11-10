@@ -16,9 +16,9 @@ pub struct StatusResponse {
     pub disk_free_gb: Option<f64>,
 }
 
-/// Win32 GetDiskFreeSpaceExW binding — free bytes of the drive holding `path`.
+/// Free bytes on the volume holding `path` (win32 GetDiskFreeSpaceExW).
 #[cfg(target_os = "windows")]
-fn windows_disk_free(path: &Path) -> Option<u64> {
+fn volume_free(path: &Path) -> Option<u64> {
     use std::os::windows::ffi::OsStrExt;
     #[link(name = "kernel32")]
     unsafe extern "system" {
@@ -45,9 +45,35 @@ fn windows_disk_free(path: &Path) -> Option<u64> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-fn windows_disk_free(_path: &Path) -> Option<u64> {
+/// Free bytes on the volume holding `path` (POSIX statvfs).
+#[cfg(unix)]
+fn volume_free(path: &Path) -> Option<u64> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) };
+    if rc == 0 {
+        Some(stat.f_bavail as u64 * stat.f_frsize as u64)
+    } else {
+        None
+    }
+}
+
+#[cfg(not(any(target_os = "windows", unix)))]
+fn volume_free(_path: &Path) -> Option<u64> {
     None
+}
+
+/// Free bytes for `path`; falls back to the nearest existing ancestor so a
+/// not-yet-created save folder still reports its volume.
+fn disk_free_bytes(path: &Path) -> Option<u64> {
+    let mut existing = path;
+    while !existing.exists() {
+        existing = existing.parent()?;
+    }
+    volume_free(existing)
 }
 
 #[tauri::command]
@@ -56,7 +82,7 @@ pub async fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, St
     let save_root = settings.save_dir(&state.downloads_dir);
     let recording_files = state.recorder.active_recordings().await;
     let rooms = state.rooms.read().await;
-    let disk_free = windows_disk_free(&save_root).map(|bytes| (bytes as f64 / 1024.0 / 1024.0 / 1024.0 * 100.0).round() / 100.0);
+    let disk_free = disk_free_bytes(&save_root).map(|bytes| (bytes as f64 / 1024.0 / 1024.0 / 1024.0 * 100.0).round() / 100.0);
 
     Ok(StatusResponse {
         recorder: serde_json::json!({
@@ -103,6 +129,40 @@ pub async fn list_rooms(state: State<'_, AppState>) -> Result<serde_json::Value,
         "rooms": rooms.iter().cloned().collect::<Vec<_>>(),
         "recorder_running": state.recorder.is_running(),
     }))
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RoomInfo {
+    pub platform: String,
+    pub anchor_name: String,
+    pub is_live: bool,
+    pub title: String,
+}
+
+/// Resolve a room link far enough to show the anchor name in the add dialog.
+#[tauri::command]
+pub async fn resolve_room_info(
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<RoomInfo, String> {
+    let url = normalize_url(&url)?;
+    let platform = crate::resolver::Platform::detect(&url)
+        .ok_or_else(|| "暂不支持该平台，仅支持抖音、B站、虎牙、快手".to_string())?;
+    let settings = state.settings.read().await.clone();
+    let room = crate::resolver::resolve(
+        platform,
+        &url,
+        &settings.quality,
+        settings.cookie_for(&url),
+        settings.proxy_url(),
+    )
+    .await?;
+    Ok(RoomInfo {
+        platform: platform.display_name().to_string(),
+        anchor_name: room.anchor_name,
+        is_live: room.is_live,
+        title: room.title,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -264,6 +324,92 @@ pub async fn update_settings(
     // save path / interval changes take effect on the next resolve cycle
     state.recorder.sync_rooms(&app).await;
     Ok(state.settings.read().await.clone())
+}
+
+// ---------------------------------------------------------------------------
+// ffmpeg runtime
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FfmpegStatus {
+    pub path: Option<String>,
+    pub version: Option<String>,
+    /// builtin | custom | installed | path | none
+    pub source: String,
+    pub builtin_available: bool,
+    pub install_supported: bool,
+}
+
+async fn resolve_status(app: &tauri::AppHandle, custom: &str) -> FfmpegStatus {
+    use crate::recorder::ffmpeg;
+    let builtin_available = ffmpeg::builtin_ffmpeg(Some(app)).is_some();
+    let (path, version, source) = match ffmpeg::resolve_ffmpeg(Some(app), Some(custom)) {
+        Ok((path, source)) => {
+            let version = ffmpeg::ffmpeg_version(&path).await;
+            // an explicit path pointing at our own install dir reads as "installed"
+            let source = if ffmpeg::managed_ffmpeg(app).as_deref() == Some(path.as_path()) {
+                "installed"
+            } else {
+                source.as_str()
+            };
+            (
+                Some(path.to_string_lossy().to_string()),
+                version,
+                source,
+            )
+        }
+        Err(_) => (None, None, "none"),
+    };
+    FfmpegStatus {
+        path,
+        version,
+        source: source.to_string(),
+        builtin_available,
+        install_supported: ffmpeg::install_supported(),
+    }
+}
+
+#[tauri::command]
+pub async fn get_ffmpeg_status(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<FfmpegStatus, String> {
+    let custom = state.settings.read().await.ffmpeg_path.clone();
+    Ok(resolve_status(&app, &custom).await)
+}
+
+/// Empty path = auto (builtin → installed → PATH); otherwise an explicit binary.
+#[tauri::command]
+pub async fn set_ffmpeg_path(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    path: Option<String>,
+) -> Result<FfmpegStatus, String> {
+    let path = path.unwrap_or_default().trim().to_string();
+    if !path.is_empty() && !Path::new(&path).is_file() {
+        return Err("所选文件不存在".into());
+    }
+    {
+        let mut settings = state.settings.write().await;
+        settings.ffmpeg_path = path.clone();
+        save_settings(&state.settings_file, &settings)?;
+    }
+    Ok(resolve_status(&app, &path).await)
+}
+
+#[tauri::command]
+pub async fn install_ffmpeg(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<FfmpegStatus, String> {
+    let installed = crate::recorder::ffmpeg::install_ffmpeg(&app).await?;
+    let path = installed.to_string_lossy().to_string();
+    {
+        let mut settings = state.settings.write().await;
+        settings.ffmpeg_path = path.clone();
+        save_settings(&state.settings_file, &settings)?;
+    }
+    Ok(resolve_status(&app, &path).await)
 }
 
 // ---------------------------------------------------------------------------
@@ -722,7 +868,7 @@ pub async fn merge_videos(
     std::fs::write(&list_path, &list).map_err(|e| e.to_string())?;
 
     let output_path = first_dir.join(format!("merged_{stamp}.{ext}"));
-    let ffmpeg = crate::recorder::ffmpeg::find_ffmpeg(Some(&app))?;
+    let ffmpeg = crate::recorder::ffmpeg::find_ffmpeg(Some(&app), Some(&settings.ffmpeg_path))?;
     let mut cmd = tokio::process::Command::new(&ffmpeg);
     cmd.args([
         "-y",
@@ -772,7 +918,7 @@ pub async fn transcode_videos(
     let settings = state.settings.read().await.clone();
     let root = settings.save_dir(&state.downloads_dir);
     let delete_origin = settings.delete_origin;
-    let ffmpeg = crate::recorder::ffmpeg::find_ffmpeg(Some(&app))?;
+    let ffmpeg = crate::recorder::ffmpeg::find_ffmpeg(Some(&app), Some(&settings.ffmpeg_path))?;
 
     let mut converted = 0u64;
     let mut skipped = 0u64;
@@ -808,4 +954,21 @@ pub async fn transcode_videos(
         ),
     );
     Ok(serde_json::json!({ "converted": converted, "skipped": skipped, "failed": failed }))
+}
+
+#[cfg(test)]
+mod disk_tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn reports_free_space_on_unix() {
+        let free = disk_free_bytes(Path::new("/")).expect("statvfs should succeed");
+        assert!(free > 0);
+    }
+
+    #[test]
+    fn missing_paths_do_not_panic() {
+        let _ = disk_free_bytes(Path::new("/definitely/not/a/real/path"));
+    }
 }

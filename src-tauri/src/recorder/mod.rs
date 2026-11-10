@@ -8,7 +8,7 @@ use crate::config::AppSettings;
 use crate::events::LogBuffer;
 use crate::resolver::{self, Platform};
 use crate::rooms::Room;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -86,7 +86,14 @@ impl RecorderManager {
             return Ok(());
         }
         // fail fast when ffmpeg is missing
-        find_ffmpeg(Some(&app))?;
+        let custom = app
+            .state::<crate::AppState>()
+            .settings
+            .read()
+            .await
+            .ffmpeg_path
+            .clone();
+        find_ffmpeg(Some(&app), Some(&custom))?;
         self.engine_running.store(true, Ordering::SeqCst);
         *self.engine_started_at.lock().await = Some(std::time::Instant::now());
         self.log(&app, "INFO", "录制引擎已启动");
@@ -293,7 +300,7 @@ async fn room_task(
         };
         let args = build_args(&spec);
 
-        let ffmpeg_path = match find_ffmpeg(Some(&app)) {
+        let ffmpeg_path = match find_ffmpeg(Some(&app), Some(&settings.ffmpeg_path)) {
             Ok(path) => path,
             Err(err) => {
                 handle.log(&app, "ERROR", &err);

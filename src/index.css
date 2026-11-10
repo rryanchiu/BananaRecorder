@@ -22,7 +22,7 @@
   --border: oklch(0.92 0.004 286.32);
   --input: oklch(0.92 0.004 286.32);
   --ring: oklch(0.705 0.015 286.067);
-  --radius: 0.625rem;
+  --radius: 1rem;
 }
 
 .dark {
@@ -97,4 +97,23 @@
   textarea {
     user-select: text;
   }
+
+  /* Continuous-curvature ("squircle") corners on every rounded surface.
+     Chromium 139+ and recent WebKit support this natively; older engines
+     simply ignore it and keep a circular border-radius. */
+  *,
+  ::before,
+  ::after {
+    corner-shape: squircle;
+  }
+
+  /* Pills and circles (switches, status dots) stay truly round. */
+  .rounded-full {
+    corner-shape: round;
+  }
+}
+
+/* Third-party toasts inject their own drop shadow; keep the UI flat. */
+[data-sonner-toast] {
+  box-shadow: none !important;
 }

@@ -20,6 +20,8 @@ pub struct AppSettings {
     pub bilibili_cookie: String,
     pub proxy_addr: String,
     pub proxy_enabled: bool,
+    /// Explicit ffmpeg executable path; empty means auto (builtin → installed → PATH).
+    pub ffmpeg_path: String,
 }
 
 impl Default for AppSettings {
@@ -39,6 +41,7 @@ impl Default for AppSettings {
             bilibili_cookie: String::new(),
             proxy_addr: String::new(),
             proxy_enabled: false,
+            ffmpeg_path: String::new(),
         }
     }
 }

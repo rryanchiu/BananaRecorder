@@ -160,17 +160,36 @@ async fn resolve_profile(
         .await
         .map_err(|e| format!("抖音分享页读取失败: {e}"))?;
 
-    let uid_re = Regex::new(r#"unique_id":"(.*?)","verification_type"#).unwrap();
-    let unique_id = uid_re
-        .captures_iter(&share_html)
-        .last()
-        .and_then(|c| c.get(1))
-        .map(|m| m.as_str().to_string())
-        .ok_or("未找到抖音号，该主页可能无法转为直播间链接")?;
+    let room_key =
+        profile_room_key(&share_html).ok_or("未找到抖音号或 short_id，该主页可能无法转为直播间链接")?;
 
     // python fallback (spider.py:192-193): douyin number → live page html parse
-    let room_url = format!("https://live.douyin.com/{unique_id}");
+    let room_url = format!("https://live.douyin.com/{room_key}");
     resolve_via_html(&room_url, quality, cookie, proxy).await
+}
+
+/// Live-room route key from a profile share page: the custom 抖音号 (`unique_id`)
+/// when set, otherwise the numeric `short_id`. Both work as
+/// `live.douyin.com/<key>`; accounts without a custom ID have an empty
+/// `unique_id`, which used to make profile links unusable.
+fn profile_room_key(share_html: &str) -> Option<String> {
+    let uid_re = Regex::new(r#"unique_id":"(.*?)","verification_type"#).unwrap();
+    let unique_id = uid_re
+        .captures_iter(share_html)
+        .last()
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().trim().to_string())
+        .filter(|id| !id.is_empty());
+    if unique_id.is_some() {
+        return unique_id;
+    }
+
+    let short_re = Regex::new(r#""short_id":"(.*?)""#).unwrap();
+    short_re
+        .captures(share_html)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().trim().to_string())
+        .filter(|id| !id.is_empty())
 }
 
 /// amemv reflow api for profile-resolved rooms (spider.py get_app_data).
@@ -390,6 +409,79 @@ async fn resolve_via_html(
 
 /// Extract the room json (with anchor_name + stream_url) from the page html.
 fn parse_room_from_html(html: &str) -> Result<Value, String> {
+    match parse_room_from_ssr(html) {
+        Ok(room) => Ok(room),
+        Err(ssr_err) => parse_room_from_legacy_blob(html)
+            .map_err(|legacy_err| format!("{ssr_err}；{legacy_err}")),
+    }
+}
+
+/// Douyin now ships its state in a Next.js flight payload:
+/// `self.__pace_f.push([1,"d:[...]"])`, with JSON stored inside a JS string.
+/// The room lives at `state.roomStore.roomInfo.room`, and the nickname at
+/// `state.roomStore.roomInfo.anchor.nickname`.
+fn parse_room_from_ssr(html: &str) -> Result<Value, String> {
+    const MARKER: &str = "self.__pace_f.push([1,\"";
+    let mut cursor = 0usize;
+    while let Some(offset) = html[cursor..].find(MARKER) {
+        let payload_start = cursor + offset + MARKER.len();
+        let Some(end_offset) = html[payload_start..].find("\"])</script>") else {
+            break;
+        };
+        let payload_end = payload_start + end_offset;
+        cursor = payload_end + 1;
+        let raw = &html[payload_start..payload_end];
+        if !raw.contains("\\\"state\\\"") {
+            continue;
+        }
+        let Some(decoded) = decode_js_string(raw) else {
+            continue;
+        };
+        let json = decoded.strip_prefix("d:").unwrap_or(&decoded);
+        let Ok(value) = serde_json::from_str::<Value>(json) else {
+            continue;
+        };
+        let Some(room_store) = find_json_key(&value, "roomStore") else {
+            continue;
+        };
+        let Some(room_info) = room_store.get("roomInfo") else {
+            continue;
+        };
+        let Some(mut room) = room_info.get("room").cloned() else {
+            continue;
+        };
+        let anchor_name = room_info
+            .pointer("/anchor/nickname")
+            .and_then(Value::as_str)
+            .or_else(|| room.pointer("/owner/nickname").and_then(Value::as_str))
+            .unwrap_or_default()
+            .to_string();
+        if let Some(obj) = room.as_object_mut() {
+            obj.insert("anchor_name".into(), Value::String(anchor_name));
+        }
+        return Ok(room);
+    }
+    Err("抖音页面解析失败（未找到 SSR state 数据）".into())
+}
+
+/// JSON string escapes are a subset of JS string escapes, so wrapping the
+/// payload in quotes lets serde_json decode it (including surrogate pairs).
+fn decode_js_string(raw: &str) -> Option<String> {
+    serde_json::from_str::<String>(&format!("\"{raw}\"")).ok()
+}
+
+fn find_json_key<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+    match value {
+        Value::Object(map) => map
+            .get(key)
+            .or_else(|| map.values().find_map(|v| find_json_key(v, key))),
+        Value::Array(items) => items.iter().find_map(|v| find_json_key(v, key)),
+        _ => None,
+    }
+}
+
+/// Older page format: an escaped `{"state":...}` blob inside a script tag.
+fn parse_room_from_legacy_blob(html: &str) -> Result<Value, String> {
     // locate the embedded room state blob
     let state_re = Regex::new(r#"(\{\\"state\\":.*?)]\\n"]\)"#).unwrap();
     let common_re = Regex::new(r#"(\{\\"common\\":.*?)]\\n"]\)</script><div hidden"#).unwrap();
@@ -580,5 +672,59 @@ fn merge_origin(room: &mut Value, html: &str, stream_orientation: i64) {
             merged.insert(k.clone(), v.clone());
         }
         *obj = merged;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_next_flight_state() {
+        let payload = serde_json::json!([
+            "$",
+            "$L12",
+            null,
+            {
+                "state": {
+                    "roomStore": {
+                        "roomInfo": {
+                            "anchor": { "nickname": "测试主播" },
+                            "room": {
+                                "status": 4,
+                                "title": "标题",
+                                "owner": { "nickname": "备用名" }
+                            }
+                        }
+                    }
+                }
+            }
+        ]);
+        let json = format!("d:{payload}");
+        let escaped = json.replace('\\', "\\\\").replace('"', "\\\"");
+        let html = format!(
+            "<script nonce=\"x\">self.__pace_f.push([1,\"{escaped}\\n\"])</script>"
+        );
+
+        let room = parse_room_from_html(&html).expect("parse ssr state");
+        assert_eq!(
+            room.get("anchor_name").and_then(Value::as_str),
+            Some("测试主播")
+        );
+        assert_eq!(room.get("status").and_then(Value::as_i64), Some(4));
+        assert_eq!(room.get("title").and_then(Value::as_str), Some("标题"));
+    }
+
+    #[test]
+    fn profile_key_falls_back_to_short_id() {
+        let no_custom =
+            r#""user_info":{"short_id":"1293092199","unique_id":"","verification_type":1}"#;
+        assert_eq!(
+            profile_room_key(no_custom).as_deref(),
+            Some("1293092199")
+        );
+
+        let custom = r#""unique_id":"abc_123","verification_type":1,"short_id":"999""#;
+        assert_eq!(profile_room_key(custom).as_deref(), Some("abc_123"));
     }
 }

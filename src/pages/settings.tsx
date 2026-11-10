@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { FolderOpen, Save } from 'lucide-react'
+import { Download, FolderOpen, Package, Save } from 'lucide-react'
+import { listen } from '@tauri-apps/api/event'
 import { toast } from 'sonner'
-import { api, type AppSettings } from '@/lib/api'
+import {
+  api,
+  type AppSettings,
+  type FfmpegInstallProgress,
+  type FfmpegSource,
+  type FfmpegStatus,
+} from '@/lib/api'
 import { useStatus } from '@/lib/status'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -41,6 +49,15 @@ const DEFAULT_SETTINGS: AppSettings = {
   bilibili_cookie: '',
   proxy_addr: '',
   proxy_enabled: false,
+  ffmpeg_path: '',
+}
+
+const FFMPEG_SOURCE_LABEL: Record<FfmpegSource, string> = {
+  builtin: '内置版本',
+  custom: '本机路径',
+  installed: '应用内安装',
+  path: '系统 PATH',
+  none: '未找到',
 }
 
 function Row({
@@ -80,24 +97,44 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [migration, setMigration] = useState<MigrationCheck | null>(null)
   const [migrating, setMigrating] = useState(false)
+  const [ffmpeg, setFfmpeg] = useState<FfmpegStatus | null>(null)
+  const [switching, setSwitching] = useState(false)
+  const [installing, setInstalling] = useState(false)
+  const [installProgress, setInstallProgress] = useState<FfmpegInstallProgress | null>(null)
   const { status } = useStatus()
   const recordingCount = status?.recording_files.length ?? 0
 
   const load = useCallback(async () => {
-    try {
-      const data = await api.getSettings()
-      setSettings({ ...DEFAULT_SETTINGS, ...data })
-      setOriginal({ ...DEFAULT_SETTINGS, ...data })
-    } catch (err) {
+    const [settingsResult, statusResult] = await Promise.allSettled([
+      api.getSettings(),
+      api.getFfmpegStatus(),
+    ])
+    if (settingsResult.status === 'fulfilled') {
+      setSettings({ ...DEFAULT_SETTINGS, ...settingsResult.value })
+      setOriginal({ ...DEFAULT_SETTINGS, ...settingsResult.value })
+    } else {
+      const err = settingsResult.reason
       toast.error(err instanceof Error ? err.message : '加载设置失败')
-    } finally {
-      setLoading(false)
     }
+    if (statusResult.status === 'fulfilled') {
+      setFfmpeg(statusResult.value)
+    }
+    setLoading(false)
   }, [])
 
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null
+    void listen<FfmpegInstallProgress>('ffmpeg://install-progress', (event) => {
+      setInstallProgress(event.payload)
+    }).then((fn) => {
+      unlisten = fn
+    })
+    return () => unlisten?.()
+  }, [])
 
   const set = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }))
@@ -120,6 +157,66 @@ export default function SettingsPage() {
       }
     } catch {
       toast.error('打开目录选择器失败')
+    }
+  }
+
+  const syncFfmpegPath = (status: FfmpegStatus) => {
+    // explicit paths (custom / installed) are persisted; builtin/PATH means auto
+    const path =
+      status.source === 'custom' || status.source === 'installed' ? status.path ?? '' : ''
+    setSettings((prev) => ({ ...prev, ffmpeg_path: path }))
+    setOriginal((prev) => ({ ...prev, ffmpeg_path: path }))
+    setFfmpeg(status)
+  }
+
+  const useBuiltinFfmpeg = async () => {
+    setSwitching(true)
+    try {
+      const status = await api.setFfmpegPath(null)
+      syncFfmpegPath(status)
+      toast.success('已切换为内置版本')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '切换失败')
+    } finally {
+      setSwitching(false)
+    }
+  }
+
+  const pickFfmpeg = async () => {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const selected = await open({
+        directory: false,
+        multiple: false,
+        title: '选择 ffmpeg 可执行文件',
+        filters: /Windows/.test(navigator.userAgent)
+          ? [{ name: 'FFmpeg', extensions: ['exe'] }]
+          : undefined,
+      })
+      if (typeof selected !== 'string') return
+      setSwitching(true)
+      const status = await api.setFfmpegPath(selected)
+      syncFfmpegPath(status)
+      toast.success('已切换为指定的 FFmpeg')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '选择 FFmpeg 失败')
+    } finally {
+      setSwitching(false)
+    }
+  }
+
+  const installFfmpeg = async () => {
+    setInstalling(true)
+    setInstallProgress(null)
+    try {
+      const status = await api.installFfmpeg()
+      syncFfmpegPath(status)
+      toast.success(status.version ? `FFmpeg 安装完成：${status.version}` : 'FFmpeg 安装完成')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '安装 FFmpeg 失败')
+    } finally {
+      setInstalling(false)
+      setInstallProgress(null)
     }
   }
 
@@ -206,6 +303,7 @@ export default function SettingsPage() {
           <TabsTrigger value="basic">基础录制</TabsTrigger>
           <TabsTrigger value="file">文件与分段</TabsTrigger>
           <TabsTrigger value="cookie">Cookie 与代理</TabsTrigger>
+          <TabsTrigger value="ffmpeg">FFmpeg</TabsTrigger>
         </TabsList>
 
         <TabsContent value="basic">
@@ -213,13 +311,17 @@ export default function SettingsPage() {
             <CardContent className="divide-y p-6 pt-2">
               <Row
                 label="视频保存路径"
-                hint="留空则保存到应用数据目录下的 downloads 文件夹"
+                hint={
+                  status?.save_path
+                    ? `留空时保存到 ${status.save_path}`
+                    : '留空则保存到应用数据目录下的 downloads 文件夹'
+                }
               >
                 <div className="flex max-w-md gap-2">
                   <Input
                     value={settings.save_path}
                     onChange={(e) => set('save_path', e.target.value)}
-                    placeholder="例如 D:\Videos"
+                    placeholder={status?.save_path ?? '使用应用默认目录'}
                   />
                   <Button variant="outline" size="icon" title="选择目录" onClick={() => void pickFolder()}>
                     <FolderOpen />
@@ -356,6 +458,103 @@ export default function SettingsPage() {
                   disabled={!settings.proxy_enabled}
                 />
               </Row>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="ffmpeg">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">FFmpeg 运行时</CardTitle>
+              <CardDescription>
+                录制、合并和转码都依赖 FFmpeg。完整版安装包已内置；精简版需要在这里安装或指定本机已有的版本。
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-lg border bg-muted/30 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={ffmpeg?.source === 'none' ? 'destructive' : 'secondary'}>
+                    {ffmpeg ? FFMPEG_SOURCE_LABEL[ffmpeg.source] : '检测中...'}
+                  </Badge>
+                  <span className="break-all font-mono text-xs text-muted-foreground">
+                    {ffmpeg?.path ?? '未找到可用的 FFmpeg'}
+                  </span>
+                </div>
+                {ffmpeg?.version && (
+                  <div className="mt-2 text-xs text-muted-foreground">{ffmpeg.version}</div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  disabled={!ffmpeg?.builtin_available || switching || installing}
+                  onClick={() => void useBuiltinFfmpeg()}
+                >
+                  <Package />
+                  使用内置版本
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={switching || installing}
+                  onClick={() => void pickFfmpeg()}
+                >
+                  <FolderOpen />
+                  使用本机路径
+                </Button>
+                <Button
+                  disabled={!ffmpeg?.install_supported || installing}
+                  onClick={() => void installFfmpeg()}
+                >
+                  <Download />
+                  {installing ? '安装中...' : '安装 FFmpeg'}
+                </Button>
+              </div>
+
+              {installing && (
+                <div className="space-y-1.5">
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full bg-primary transition-all"
+                      style={{
+                        width: `${
+                          installProgress?.total
+                            ? Math.min(
+                                100,
+                                Math.round(
+                                  (installProgress.downloaded / installProgress.total) * 100
+                                )
+                              )
+                            : installProgress?.stage === 'extracting'
+                              ? 100
+                              : 5
+                        }%`,
+                      }}
+                    />
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {installProgress?.stage === 'extracting'
+                      ? '下载完成，正在解压...'
+                      : installProgress
+                        ? `正在下载 ${formatBytesPublic(installProgress.downloaded)}${
+                            installProgress.total
+                              ? ` / ${formatBytesPublic(installProgress.total)}`
+                              : ''
+                          }`
+                        : '准备下载...'}
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1 text-xs text-muted-foreground">
+                <p>不指定路径时，按“内置版本 → 应用内安装 → 系统 PATH”的顺序自动选择。</p>
+                {ffmpeg && !ffmpeg.builtin_available && (
+                  <p>当前安装包未内置 FFmpeg（精简版），请安装或指定本机路径。</p>
+                )}
+                {ffmpeg && !ffmpeg.install_supported && (
+                  <p>当前平台不支持一键安装，请手动指定 FFmpeg 路径。</p>
+                )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

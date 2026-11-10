@@ -100,9 +100,9 @@ Cookie 保存在本地设置 JSON 中，并非加密凭据存储。请勿将设�
 - **Rust stable**，使用 Windows MSVC 工具链。
 - **Visual Studio Build Tools**，安装 C++ 桌面开发工具和 Windows SDK。
 - **Microsoft Edge WebView2 Runtime**。
-- **FFmpeg**：准备 Windows 构建，将 `ffmpeg.exe` 放到 `src-tauri/binaries/ffmpeg.exe`。
+- **FFmpeg（仅完整版）**：Windows 放到 `src-tauri/binaries/ffmpeg.exe`，macOS/Linux 放到 `src-tauri/binaries/ffmpeg`。
 
-> FFmpeg 二进制不在 Git 中。即使系统 PATH 已有 FFmpeg，构建安装包前也必须准备上述资源文件。可从 [FFmpeg 下载页](https://ffmpeg.org/download.html) 选择构建，并核对其许可。
+> FFmpeg 二进制不在 Git 中。完整版会把该文件打进安装包；精简版不内置 FFmpeg，构建时也不需要该资源。用户可以在“设置 → FFmpeg”中一键安装，或指定本机已有的路径。构建发布包前请核对所选 FFmpeg 构建的许可。
 
 ### 安装依赖并启动
 
@@ -123,7 +123,9 @@ npm run tauri dev
 | `npm run build` | TypeScript 检查与前端生产构建 |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | 检查 Rust 后端 |
 | `cargo test --manifest-path src-tauri/Cargo.toml` | 运行默认测试 |
-| `npm run tauri build` | 构建桌面应用与安装包 |
+| `npm run tauri build` | 构建完整版（内置 FFmpeg） |
+| `npm run tauri:build:lite` | 构建精简版（不内置 FFmpeg） |
+| `npm run tauri:dev:lite` | 以精简版配置启动开发环境 |
 
 ## 构建安装包
 
@@ -148,6 +150,21 @@ src-tauri/target/release/
 ```powershell
 npm run tauri build -- --bundles nsis
 ```
+
+### 完整版与精简版
+
+- **完整版**：`npm run tauri build`，内置 `src-tauri/binaries/` 下的 FFmpeg，开箱即用。
+- **精简版**：`npm run tauri:build:lite`，不打包 FFmpeg，安装包更小；产品名为
+  `BananaRecorder Lite`，不会覆盖完整版安装包。首次启动后到“设置 → FFmpeg”
+  点击“安装 FFmpeg”，或指定本机已有的路径。
+
+FFmpeg 页签的三个操作：
+
+| 操作 | 行为 |
+| --- | --- |
+| 使用内置版本 | 清除自定义路径，按 内置 → 应用内安装 → 系统 PATH 自动选择 |
+| 使用本机路径 | 文件选择器指定已有的 `ffmpeg` / `ffmpeg.exe` |
+| 安装 FFmpeg | 下载并解压到应用数据目录（无需管理员权限），完成后自动启用 |
 
 主程序 EXE 不等于完整的独立单文件发行包。若手动分发主程序，需要同时处理 FFmpeg、WebView2 运行环境及第三方许可文件。首次构建可能需要联网下载 Rust 依赖和安装包工具。
 

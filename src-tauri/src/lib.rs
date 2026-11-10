@@ -89,6 +89,37 @@ pub fn run() {
             };
             app.manage(state);
 
+            // ----- macOS window corners -----
+            // Frameless windows are square by default. Clip the content view to
+            // a rounded rect and use CALayer's continuous curve, which is the
+            // same "squircle" smoothing native macOS windows use.
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.with_webview(|webview| {
+                    use objc2_app_kit::{NSColor, NSWindow};
+                    use objc2_quartz_core::kCACornerCurveContinuous;
+
+                    // SAFETY: `with_webview` runs on the main thread and the
+                    // pointers refer to the live window/webview.
+                    unsafe {
+                        let ns_window: &NSWindow = &*webview.ns_window().cast();
+                        let clear = NSColor::clearColor();
+                        ns_window.setOpaque(false);
+                        ns_window.setBackgroundColor(Some(&clear));
+
+                        if let Some(content) = ns_window.contentView() {
+                            content.setWantsLayer(true);
+                            if let Some(layer) = content.layer() {
+                                layer.setCornerRadius(16.0);
+                                layer.setCornerCurve(kCACornerCurveContinuous);
+                                layer.setMasksToBounds(true);
+                            }
+                        }
+                        ns_window.invalidateShadow();
+                    }
+                });
+            }
+
             // ----- system tray -----
             let open_dashboard =
                 MenuItem::with_id(app, "open_dashboard", "打开仪表盘", true, None::<&str>)?;
@@ -177,12 +208,16 @@ pub fn run() {
             commands::get_status,
             commands::control_recorder,
             commands::list_rooms,
+            commands::resolve_room_info,
             commands::create_room,
             commands::update_room,
             commands::delete_room,
             commands::stop_recording,
             commands::get_settings,
             commands::update_settings,
+            commands::get_ffmpeg_status,
+            commands::set_ffmpeg_path,
+            commands::install_ffmpeg,
             commands::check_save_path_change,
             commands::migrate_save_path,
             commands::get_logs,

@@ -289,7 +289,7 @@ export default function Videos() {
           {filteredDirs.map((dir) => (
             <button
               key={dir.path}
-              className="group flex items-center gap-3 rounded-xl border bg-card p-4 text-left shadow-sm transition-colors hover:border-primary/40 hover:bg-accent"
+              className="group flex items-center gap-3 rounded-xl border bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent"
               onClick={() => void load(dir.path)}
             >
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary dark:bg-primary/20">
